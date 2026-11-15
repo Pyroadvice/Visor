@@ -946,6 +946,15 @@ function uiMedida(m){
   /* --- toma: distancia y ángulos --- */
   const rl = rollUsado(), sem = semaforoRoll(rl), tt = tiltUsado();
   h += `<h3>Toma</h3>
+  <div class="row"><label>Perfil de cámara</label><select id="iPerf">
+    ${S.perfiles.map(q=>`<option value="${q.id}"${q.id===S.perfilId?" selected":""}>${q.name}${
+      zoomDe(q)!==null?"  ·  ×"+fmt(zoomDe(q),2):""}</option>`).join("")}
+  </select></div>
+  <div class="note">${des
+    ? "El perfil activo no corresponde a esta fuente. Elige el que se calibró para ella."
+    : (esVivo()
+      ? "En Directo el perfil se activa solo si el objetivo tiene uno asociado."
+      : "Foto y vídeo no llevan cámara asociada: <b>elige a mano el perfil calibrado para la fuente</b> de la que salió esta imagen. Un perfil de foto aplicado a vídeo da un error de escala constante.")}</div>
   <div class="row"><label>Distancia de observación</label><input type="number" step="0.01" id="iD" value="${S.med.d}"><span class="u">m</span></div>`;
 
   if (esVivo()){
@@ -1388,6 +1397,7 @@ function enlaza(){
     limita(); dibuja(); pintaBadges(); } });
   repite($("#zIn"),()=>zoom(1.25)); repite($("#zOut"),()=>zoom(1/1.25));
 
+  on("iPerf","change",e=>{S.perfilId=e.target.value; guarda(); pinta();});
   num("iD","d",S.med); num("iUd","ud",S.med); num("iHref","hRef",S.med);
   num("iHnom","hNom",S.med); num("iTol","tol",S.med);
   num("iPhi","phiManual",S.med); num("iRoll","rollManual",S.med);
