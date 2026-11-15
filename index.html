@@ -25,13 +25,12 @@ header{flex:0 0 auto;background:var(--panel);border-bottom:1px solid var(--line)
 #cv{position:absolute;inset:0;width:100%;height:100%;display:block}
 #hint{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   color:var(--dim);font-size:13px;text-align:center;padding:24px;pointer-events:none}
-#tiltbadge{position:absolute;top:8px;left:8px;background:rgba(0,0,0,.65);border:1px solid var(--line);
+.badge{position:absolute;top:8px;background:rgba(0,0,0,.66);border:1px solid var(--line);
   border-radius:6px;padding:4px 8px;font:600 12px/1.3 ui-monospace,monospace;pointer-events:none}
-#zoombadge{position:absolute;top:8px;right:8px;background:rgba(0,0,0,.65);border:1px solid var(--line);
-  border-radius:6px;padding:4px 8px;font:600 12px/1.3 ui-monospace,monospace;pointer-events:none}
+#tiltbadge{left:8px} #zoombadge{right:8px}
 
-#panel{flex:0 0 auto;max-height:52%;overflow-y:auto;background:var(--panel);
-  border-top:1px solid var(--line);padding:10px 12px 14px;-webkit-overflow-scrolling:touch}
+#panel{flex:0 0 auto;max-height:54%;overflow-y:auto;background:var(--panel);
+  border-top:1px solid var(--line);padding:10px 12px 16px;-webkit-overflow-scrolling:touch}
 .row{display:flex;gap:8px;align-items:center;margin:7px 0}
 .row>label{flex:0 0 112px;color:var(--dim);font-size:12.5px}
 input[type=number],input[type=text],select{flex:1 1 auto;min-width:0;background:#0d1117;color:var(--txt);
@@ -45,14 +44,20 @@ button.o{background:var(--org);border-color:var(--org);color:#1a1000}
 button.g{background:var(--ok);border-color:var(--ok);color:#06240f}
 .btns{display:flex;gap:8px;margin:9px 0}
 .btns>button{flex:1}
-.nudge{display:flex;gap:6px;align-items:center;margin:8px 0}
-.nudge button{flex:0 0 auto;min-width:46px;font:600 15px ui-monospace,monospace;padding:9px 0}
-.nudge span{flex:1;text-align:center;color:var(--dim);font-size:12px}
 
-h3{margin:14px 0 4px;font-size:11.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim);font-weight:600}
+/* cruceta de desplazamiento */
+.navwrap{display:flex;gap:10px;align-items:center;margin:10px 0}
+.pad{display:grid;grid-template-columns:repeat(3,42px);grid-template-rows:repeat(3,36px);gap:4px;flex:0 0 auto}
+.pad button{padding:0;font:600 15px ui-monospace,monospace;border-radius:6px}
+.pad .sp{visibility:hidden}
+.navside{flex:1 1 auto;min-width:0}
+.zrow{display:flex;gap:6px;margin-bottom:6px}
+.zrow button{flex:1;padding:8px 0;font:600 14px ui-monospace,monospace}
+
+h3{margin:15px 0 4px;font-size:11.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim);font-weight:600}
 .res{background:#0d1117;border:1px solid var(--line);border-radius:8px;padding:11px;margin:8px 0}
 .big{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin:3px 0}
-.big b{font:700 25px/1.1 ui-monospace,monospace}
+.big b{font:700 24px/1.1 ui-monospace,monospace}
 .big s{text-decoration:none;color:var(--dim);font-size:12px}
 .kv{display:flex;justify-content:space-between;font-size:12.5px;padding:2.5px 0;color:var(--dim)}
 .kv b{color:var(--txt);font-family:ui-monospace,monospace;font-weight:600}
@@ -63,17 +68,20 @@ h3{margin:14px 0 4px;font-size:11.5px;letter-spacing:.09em;text-transform:upperc
 .note{color:var(--dim);font-size:11.5px;line-height:1.5;margin:7px 0}
 .err{color:var(--bad);font-size:12px;margin:6px 0}
 table{width:100%;border-collapse:collapse;font-size:12.5px;margin:6px 0}
-th,td{text-align:right;padding:4px 3px;border-bottom:1px solid var(--line)}
+th,td{text-align:right;padding:5px 3px;border-bottom:1px solid var(--line);vertical-align:middle}
 th{color:var(--dim);font-weight:500;font-size:11px}
 td:first-child,th:first-child{text-align:left}
 td input{width:100%;padding:5px 6px;font-size:13px}
+tr.sel{background:rgba(68,147,248,.13)}
+tr.sel td{border-bottom-color:var(--acc)}
+.mini{padding:5px 7px;font-size:11.5px;border-radius:5px}
 .hide{display:none!important}
-.chip{display:inline-block;background:#21262d;border:1px solid var(--line);border-radius:999px;
-  padding:3px 9px;font-size:11.5px;color:var(--dim);margin:2px 3px 2px 0}
-input[type=file]{display:none}
 .seg{display:flex;border:1px solid var(--line);border-radius:7px;overflow:hidden;margin:8px 0}
 .seg button{flex:1;border:none;border-radius:0;font-size:12.5px;padding:9px 4px;background:#0d1117;color:var(--dim)}
 .seg button.on{background:var(--acc);color:#fff}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:baseline}
+input[type=file]{display:none}
+a{color:var(--acc)}
 </style>
 </head>
 <body>
@@ -90,8 +98,8 @@ input[type=file]{display:none}
 
 <div id="stage">
   <canvas id="cv"></canvas>
-  <div id="tiltbadge">φ —</div>
-  <div id="zoombadge">1,0×</div>
+  <div class="badge" id="tiltbadge">φ —</div>
+  <div class="badge" id="zoombadge">1,0×</div>
   <div id="hint">Carga una imagen para empezar</div>
 </div>
 
@@ -100,11 +108,21 @@ input[type=file]{display:none}
 <input type="file" id="fImg" accept="image/*">
 <input type="file" id="fVid" accept="video/*">
 <video id="vid" playsinline muted style="display:none"></video>
+<datalist id="dlEtiq">
+  <option>Altura de funcionamiento</option>
+  <option>Altura máxima del efecto</option>
+  <option>Altura mínima de extinción</option>
+  <option>Inicio del efecto</option>
+  <option>Fin del efecto</option>
+  <option>Apogeo de la trayectoria</option>
+</datalist>
 
 <script>
 "use strict";
 const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
 const fmt = (v,n=2) => (v===null||v===undefined||!isFinite(v)) ? "—" : v.toFixed(n).replace(".",",");
+const COL = ["#4493f8","#3fb950","#d29922","#bc8cff","#39c5cf","#f778ba"];
 
 /* ---------------------------------------------------------------- estado */
 const PERFIL_BASE = {
@@ -124,14 +142,16 @@ const S = {
   med: JSON.parse(localStorage.getItem("vpd.med")||"null") || {
     d:100, ud:1.0, hRef:0, tol:20, upx:3, uphi:0.3, fuente:"sensor"
   },
-  src:null,           // {kind:'img'|'vid'|'live', el, w, h}
-  marks:{ origen:null, objetivo:null },
-  activo:"origen",
+  src:null,
+  marks:{ origen:null, puntos:[{lab:"Altura de funcionamiento", y:null}] },
+  sel:-1,                 // -1 = origen ; 0..n-1 = índice de punto
+  paso:"fino",            // fino | normal
   view:{s:1, tx:0, ty:0, fit:1},
   tilt:{val:null, n:0, src:"—", err:""},
   tiltFijo:null,
   calib:{ puntos:[], d:100, hCam:0, sensor:0, out:null, tipo:"phi" },
-  reticula:false
+  reticula:false,
+  liveErr:""
 };
 const guarda = () => {
   localStorage.setItem("vpd.perfiles", JSON.stringify(S.perfiles));
@@ -139,6 +159,7 @@ const guarda = () => {
   localStorage.setItem("vpd.med", JSON.stringify(S.med));
 };
 const perfil = () => S.perfiles.find(p=>p.id===S.perfilId) || S.perfiles[0];
+const PASO = () => S.paso==="fino" ? 0.25 : 4;   // en píxeles de imagen
 
 /* ------------------------------------------------------------- sensores */
 let sensorOn = false;
@@ -155,8 +176,6 @@ async function activaSensores(){
       try{ await DeviceOrientationEvent.requestPermission(); }catch(e){}
     }
   }catch(e){ S.tilt.err=e.message; }
-
-  // 1) Generic Sensor API
   try{
     if ("GravitySensor" in window){
       const g = new GravitySensor({frequency:20});
@@ -168,8 +187,6 @@ async function activaSensores(){
       g.start(); sensorOn=true;
     }
   }catch(e){ S.tilt.err=e.message; }
-
-  // 2) devicemotion
   if (!sensorOn){
     window.addEventListener("devicemotion", ev=>{
       const a = ev.accelerationIncludingGravity; if(!a||a.x===null) return;
@@ -178,7 +195,6 @@ async function activaSensores(){
     });
     sensorOn=true;
   }
-  // 3) deviceorientation como respaldo
   window.addEventListener("deviceorientation", ev=>{
     if (S.tilt.src==="GravitySensor"||S.tilt.src==="devicemotion") return;
     if (ev.beta===null) return;
@@ -187,7 +203,7 @@ async function activaSensores(){
   pinta();
 }
 function tiltUsado(){
-  if (S.med.fuente==="manual") return S.med.phiManual ?? 0;
+  if (S.med.fuente==="manual") return +(S.med.phiManual ?? 0);
   if (S.tiltFijo!==null) return S.tiltFijo + perfil().delta;
   if (S.tilt.val===null) return null;
   return S.tilt.val + perfil().delta;
@@ -203,32 +219,30 @@ function geom(){
   const yDe = rr => y0 - f*Math.tan(Math.atan(rr) - phi);
   return {f, y0, phi, r, yDe};
 }
-function medida(){
-  const g = geom(); if (!g) return null;
-  const mo = S.marks.origen, mt = S.marks.objetivo;
-  if (mo===null || mt===null) return null;
-  const d = +S.med.d;
-  const ro = g.r(mo), rt = g.r(mt), dr = rt-ro;
-  const H = dr*d + (+S.med.hRef||0);
-  const dH = dr*d;
-
-  // presupuesto de incertidumbre, derivadas numéricas
-  const p = perfil(), src = S.src;
+function medidas(){
+  const g = geom(); if (!g || S.marks.origen===null) return null;
+  const p = perfil(), d = +S.med.d, yo = S.marks.origen;
+  const phi0 = tiltUsado() ?? 0;
   const con = (fv,y0v,phiv,dv,yov,ytv)=>{
     const rr = y => Math.tan(Math.atan((y0v-y)/fv) + phiv*Math.PI/180);
     return (rr(ytv)-rr(yov))*dv;
   };
-  const base = con(g.f,g.y0,(tiltUsado()??0),d,mo,mt);
-  const cDist = Math.abs(dH)*(+S.med.ud)/100;
-  const cF    = Math.abs(con(g.f*(1+(+p.uF)/100),g.y0,(tiltUsado()??0),d,mo,mt)-base);
-  const cPhi  = Math.abs(con(g.f,g.y0,(tiltUsado()??0)+(+S.med.uphi),d,mo,mt)-base);
-  const upx   = +S.med.upx;
-  const cPo   = Math.abs(con(g.f,g.y0,(tiltUsado()??0),d,mo+upx,mt)-base);
-  const cPt   = Math.abs(con(g.f,g.y0,(tiltUsado()??0),d,mo,mt+upx)-base);
-  const uc = Math.hypot(cDist,cF,cPhi,cPo,cPt);
-  const U = 2*uc;
-  return {ro,rt,dr,H,dH,U,uc,comp:{cDist,cF,cPhi,cPo,cPt},
-          relU: Math.abs(dH)>1e-9 ? 100*U/Math.abs(dH) : null};
+  const ro = g.r(yo);
+  return S.marks.puntos.map(q=>{
+    if (q.y===null) return {lab:q.lab, y:null};
+    const rt = g.r(q.y), dr = rt-ro, dH = dr*d;
+    const base = con(g.f,g.y0,phi0,d,yo,q.y);
+    const cDist = Math.abs(dH)*(+S.med.ud)/100;
+    const cF    = Math.abs(con(g.f*(1+(+p.uF)/100),g.y0,phi0,d,yo,q.y)-base);
+    const cPhi  = Math.abs(con(g.f,g.y0,phi0+(+S.med.uphi),d,yo,q.y)-base);
+    const upx   = +S.med.upx;
+    const cPo   = Math.abs(con(g.f,g.y0,phi0,d,yo+upx,q.y)-base);
+    const cPt   = Math.abs(con(g.f,g.y0,phi0,d,yo,q.y+upx)-base);
+    const uc = Math.hypot(cDist,cF,cPhi,cPo,cPt), U = 2*uc;
+    return {lab:q.lab, y:q.y, ro, rt, dr, dH, H:dH+(+S.med.hRef||0), uc, U,
+            comp:{cDist,cF,cPhi,cPo,cPt},
+            relU: Math.abs(dH)>1e-9 ? 100*U/Math.abs(dH) : null};
+  });
 }
 
 /* ------------------------------------------------------------- lienzo */
@@ -237,27 +251,33 @@ let W=0, H=0, DPR=1;
 function dimensiona(){
   DPR = Math.min(window.devicePixelRatio||1, 2.5);
   const r = $("#stage").getBoundingClientRect();
-  W = Math.max(1,Math.round(r.width)); H = Math.max(1,Math.round(r.height));
+  const nw = Math.max(1,Math.round(r.width)), nh = Math.max(1,Math.round(r.height));
+  if (nw===W && nh===H && cv.width===Math.round(nw*DPR)) return;
+  W=nw; H=nh;
   cv.width = Math.round(W*DPR); cv.height = Math.round(H*DPR);
   ctx.setTransform(DPR,0,0,DPR,0,0);
-  if (S.src) encaja(false);
-  dibuja();
+  if (S.src){ S.view.fit = Math.min(W/S.src.w, H/S.src.h); limita(); }
+  dibuja(); pintaBadges();
 }
-function encaja(reset=true){
+function encaja(){
   if (!S.src) return;
   const s = Math.min(W/S.src.w, H/S.src.h);
-  S.view.fit = s;
-  if (reset){ S.view.s=s; S.view.tx=(W-S.src.w*s)/2; S.view.ty=(H-S.src.h*s)/2; }
-  else { limita(); }
+  S.view.fit = s; S.view.s = s;
+  S.view.tx = (W-S.src.w*s)/2; S.view.ty = (H-S.src.h*s)/2;
 }
+/* La cruz filar está en el centro del visor, así que cualquier píxel de la
+   imagen tiene que poder llegar hasta ahí. El recorte permite sacar la
+   imagen del visor hasta que su borde alcanza el centro, no antes. */
 function limita(){
   const v=S.view, iw=S.src.w*v.s, ih=S.src.h*v.s;
-  v.tx = iw<=W ? (W-iw)/2 : Math.min(0, Math.max(W-iw, v.tx));
-  v.ty = ih<=H ? (H-ih)/2 : Math.min(0, Math.max(H-ih, v.ty));
+  v.tx = Math.min(W/2, Math.max(W/2-iw, v.tx));
+  v.ty = Math.min(H/2, Math.max(H/2-ih, v.ty));
 }
 const aImg = (sx,sy) => ({x:(sx-S.view.tx)/S.view.s, y:(sy-S.view.ty)/S.view.s});
 const aPan = (ix,iy) => ({x:ix*S.view.s+S.view.tx, y:iy*S.view.s+S.view.ty});
 const centroImg = () => aImg(W/2, H/2);
+const dentro = () => { const c=centroImg();
+  return c.x>=0 && c.y>=0 && c.x<=S.src.w && c.y<=S.src.h; };
 
 function dibuja(){
   ctx.clearRect(0,0,W,H);
@@ -266,40 +286,28 @@ function dibuja(){
     ctx.imageSmoothingEnabled = v.s < 2;
     try{ ctx.drawImage(S.src.el, 0,0,S.src.w,S.src.h, v.tx,v.ty,S.src.w*v.s,S.src.h*v.s); }catch(e){}
   }
-  // marcas
-  for (const [k,col] of [["origen","#ff7b40"],["objetivo","#4493f8"]]){
-    const y = S.marks[k]; if (y===null||!S.src) continue;
-    const py = aPan(0,y).y;
-    if (py<-20||py>H+20) continue;
-    ctx.strokeStyle=col; ctx.lineWidth=1.5; ctx.setLineDash([7,5]);
-    ctx.beginPath(); ctx.moveTo(0,py); ctx.lineTo(W,py); ctx.stroke(); ctx.setLineDash([]);
-    ctx.fillStyle=col; ctx.font="600 11px ui-monospace,monospace";
-    ctx.fillText(k==="origen"?"ORIGEN":"OBJETIVO", 6, py-5);
-  }
-  // puntos de calibración
-  if (S.modo==="calib" && S.src){
-    ctx.font="600 11px ui-monospace,monospace";
-    S.calib.puntos.forEach((p,i)=>{
-      if (p.y===null) return;
-      const py=aPan(0,p.y).y;
-      ctx.strokeStyle="#3fb950"; ctx.lineWidth=1.2; ctx.setLineDash([4,4]);
-      ctx.beginPath(); ctx.moveTo(0,py); ctx.lineTo(W,py); ctx.stroke(); ctx.setLineDash([]);
-      ctx.fillStyle="#3fb950"; ctx.fillText(fmt(p.h,1)+" cm", 6, py-4);
+  if (S.src && S.modo!=="calib"){
+    if (S.marks.origen!==null) linea(S.marks.origen, "#ff7b40", "ORIGEN", S.sel===-1);
+    S.marks.puntos.forEach((q,i)=>{
+      if (q.y!==null) linea(q.y, COL[i%COL.length], (i+1)+" · "+(q.lab||"punto"), S.sel===i);
     });
   }
-  // retícula de tolerancia
+  if (S.modo==="calib" && S.src){
+    S.calib.puntos.forEach(p=>{ if(p.y!==null) linea(p.y,"#3fb950",fmt(p.h,1)+" cm",false); });
+  }
   if (S.reticula) dibujaReticula();
-  // cruz filar
-  const cx=W/2, cy=H/2;
-  ctx.strokeStyle="rgba(255,255,255,.9)"; ctx.lineWidth=1;
-  ctx.beginPath();
-  ctx.moveTo(cx-26,cy); ctx.lineTo(cx-5,cy); ctx.moveTo(cx+5,cy); ctx.lineTo(cx+26,cy);
-  ctx.moveTo(cx,cy-26); ctx.lineTo(cx,cy-5); ctx.moveTo(cx,cy+5); ctx.lineTo(cx,cy+26);
-  ctx.stroke();
-  ctx.strokeStyle="rgba(0,0,0,.55)"; ctx.lineWidth=3;
-  ctx.beginPath(); ctx.moveTo(cx-26,cy+0.5); ctx.lineTo(cx-5,cy+0.5); ctx.stroke();
-  ctx.strokeStyle=S.activo==="origen"?"#ff7b40":"#4493f8"; ctx.lineWidth=1.5;
-  ctx.beginPath(); ctx.arc(cx,cy,3.2,0,7); ctx.stroke();
+  cruz();
+}
+function linea(iy,col,lab,activa){
+  const py = aPan(0,iy).y;
+  if (py<-24||py>H+24) return;
+  ctx.strokeStyle=col; ctx.lineWidth=activa?2.2:1.4;
+  ctx.setLineDash(activa?[]:[7,5]);
+  ctx.beginPath(); ctx.moveTo(0,py); ctx.lineTo(W,py); ctx.stroke(); ctx.setLineDash([]);
+  ctx.font="600 11px ui-monospace,monospace";
+  const w = ctx.measureText(lab).width;
+  ctx.fillStyle="rgba(0,0,0,.6)"; ctx.fillRect(4,py-16,w+8,14);
+  ctx.fillStyle=col; ctx.fillText(lab, 8, py-5);
 }
 function dibujaReticula(){
   const g=geom(); if(!g||S.marks.origen===null) return;
@@ -315,15 +323,37 @@ function dibujaReticula(){
     ctx.strokeStyle=col; ctx.lineWidth=lab==="nominal"?1:1.8;
     ctx.setLineDash(lab==="nominal"?[3,6]:[]);
     ctx.beginPath(); ctx.moveTo(0,py); ctx.lineTo(W,py); ctx.stroke(); ctx.setLineDash([]);
-    ctx.fillStyle=col; ctx.fillText(lab+"  "+fmt(hv,1)+" m", 6, py-4);
+    ctx.fillStyle=col; ctx.fillText(lab+"  "+fmt(hv,1)+" m", 6, py+13);
   }
+}
+function cruz(){
+  const cx=W/2, cy=H/2;
+  const col = S.modo==="calib" ? "#3fb950"
+            : (S.sel===-1 ? "#ff7b40" : COL[S.sel%COL.length]);
+  ctx.strokeStyle="rgba(0,0,0,.6)"; ctx.lineWidth=3.5;
+  ctx.beginPath();
+  ctx.moveTo(cx-30,cy); ctx.lineTo(cx-6,cy); ctx.moveTo(cx+6,cy); ctx.lineTo(cx+30,cy);
+  ctx.moveTo(cx,cy-30); ctx.lineTo(cx,cy-6); ctx.moveTo(cx,cy+6); ctx.lineTo(cx,cy+30);
+  ctx.stroke();
+  ctx.strokeStyle="rgba(255,255,255,.92)"; ctx.lineWidth=1;
+  ctx.beginPath();
+  ctx.moveTo(cx-30,cy); ctx.lineTo(cx-6,cy); ctx.moveTo(cx+6,cy); ctx.lineTo(cx+30,cy);
+  ctx.moveTo(cx,cy-30); ctx.lineTo(cx,cy-6); ctx.moveTo(cx,cy+6); ctx.lineTo(cx,cy+30);
+  ctx.stroke();
+  ctx.strokeStyle=col; ctx.lineWidth=1.6;
+  ctx.beginPath(); ctx.arc(cx,cy,3.4,0,7); ctx.stroke();
 }
 function pintaBadges(){
   const t=tiltUsado();
   const fij = S.tiltFijo!==null ? " ⏸" : "";
-  $("#tiltbadge").textContent = t===null ? "φ —" : ("φ "+(t>=0?"+":"")+fmt(t,2)+"°"+fij);
-  $("#tiltbadge").style.color = t===null ? "var(--dim)" : (Math.abs(t)<0.3?"var(--ok)":"var(--txt)");
-  $("#zoombadge").textContent = S.src ? fmt(S.view.s/S.view.fit,1)+"×" : "—";
+  const tb=$("#tiltbadge"), zb=$("#zoombadge");
+  tb.textContent = t===null ? "φ —" : ("φ "+(t>=0?"+":"")+fmt(t,2)+"°"+fij);
+  tb.style.color = t===null ? "var(--dim)" : (Math.abs(t)<0.3?"var(--ok)":"var(--txt)");
+  if (S.src){
+    const c=centroImg();
+    zb.textContent = fmt(S.view.s/S.view.fit,1)+"×  y="+fmt(c.y,1);
+    zb.style.color = dentro()? "var(--txt)" : "var(--warn)";
+  } else zb.textContent="—";
 }
 
 /* ------------------------------------------------- gestos (pan + pinza) */
@@ -335,8 +365,7 @@ cv.addEventListener("pointerdown", e=>{
   pts.set(e.pointerId,{x:e.clientX,y:e.clientY});
   if (pts.size===2){
     const [a,b]=[...pts.values()];
-    pinza={dist:Math.hypot(a.x-b.x,a.y-b.y), s:S.view.s,
-           cx:(a.x+b.x)/2, cy:(a.y+b.y)/2};
+    pinza={dist:Math.hypot(a.x-b.x,a.y-b.y), s:S.view.s, cx:(a.x+b.x)/2, cy:(a.y+b.y)/2};
   }
 });
 cv.addEventListener("pointermove", e=>{
@@ -347,15 +376,14 @@ cv.addEventListener("pointermove", e=>{
   if (pts.size===2 && pinza){
     const [a,b]=[...pts.values()];
     const nd = Math.hypot(a.x-b.x,a.y-b.y);
-    const ns = Math.max(S.view.fit*0.5, Math.min(S.view.fit*40, pinza.s*nd/pinza.dist));
+    const ns = Math.max(S.view.fit*0.4, Math.min(S.view.fit*60, pinza.s*nd/pinza.dist));
     const px=pinza.cx-rect.left, py=pinza.cy-rect.top;
     const im = aImg(px,py);
-    S.view.s = ns;
-    S.view.tx = px - im.x*ns; S.view.ty = py - im.y*ns;
+    S.view.s = ns; S.view.tx = px - im.x*ns; S.view.ty = py - im.y*ns;
     limita(); dibuja(); pintaBadges();
   } else if (pts.size===1){
     S.view.tx += e.clientX-prev.x; S.view.ty += e.clientY-prev.y;
-    limita(); dibuja();
+    limita(); dibuja(); pintaBadges();
   }
 });
 const soltar = e=>{ pts.delete(e.pointerId); if(pts.size<2) pinza=null; };
@@ -364,7 +392,7 @@ cv.addEventListener("wheel", e=>{
   if (!S.src) return; e.preventDefault();
   const rect=cv.getBoundingClientRect(), px=e.clientX-rect.left, py=e.clientY-rect.top;
   const im=aImg(px,py);
-  const ns=Math.max(S.view.fit*0.5, Math.min(S.view.fit*40, S.view.s*Math.exp(-e.deltaY*0.0015)));
+  const ns=Math.max(S.view.fit*0.4, Math.min(S.view.fit*60, S.view.s*Math.exp(-e.deltaY*0.0015)));
   S.view.s=ns; S.view.tx=px-im.x*ns; S.view.ty=py-im.y*ns;
   limita(); dibuja(); pintaBadges();
 },{passive:false});
@@ -372,46 +400,67 @@ cv.addEventListener("wheel", e=>{
 function zoom(fac){
   if(!S.src) return;
   const im=centroImg();
-  S.view.s=Math.max(S.view.fit*0.5, Math.min(S.view.fit*40, S.view.s*fac));
+  S.view.s=Math.max(S.view.fit*0.4, Math.min(S.view.fit*60, S.view.s*fac));
   S.view.tx=W/2-im.x*S.view.s; S.view.ty=H/2-im.y*S.view.s;
   limita(); dibuja(); pintaBadges();
 }
-function desplaza(dpx){
+/* Desplaza en píxeles de IMAGEN, no de pantalla: el paso fino es el mismo
+   a cualquier zoom. dx,dy en unidades de paso; mueve la imagen igual que
+   el arrastre con el dedo. */
+function mueve(dx,dy){
   if(!S.src) return;
-  S.view.ty -= dpx*S.view.s; limita(); dibuja();
+  const k = PASO()*S.view.s;
+  S.view.tx -= dx*k; S.view.ty -= dy*k;
+  limita(); dibuja(); pintaBadges();
+}
+/* pulsación mantenida con repetición */
+function repite(el, fn){
+  if(!el) return;
+  let t1=null,t2=null;
+  const stop=()=>{ clearTimeout(t1); clearInterval(t2); t1=t2=null; };
+  el.addEventListener("pointerdown", e=>{
+    e.preventDefault(); fn();
+    t1=setTimeout(()=>{ t2=setInterval(fn,45); }, 300);
+  });
+  ["pointerup","pointercancel","pointerleave"].forEach(k=>el.addEventListener(k,stop));
 }
 
 /* ------------------------------------------------------ carga de medios */
+function limpiaMarcas(){
+  S.marks.origen=null;
+  S.marks.puntos.forEach(q=>q.y=null);
+  S.sel=-1;
+}
 async function cargaImagen(file){
   let bmp;
   try{ bmp = await createImageBitmap(file,{imageOrientation:"from-image"}); }
   catch(e){ bmp = await createImageBitmap(file); }
   S.src={kind:"img", el:bmp, w:bmp.width, h:bmp.height};
-  S.marks={origen:null,objetivo:null}; S.activo="origen";
+  limpiaMarcas();
   if (S.modo==="calib") S.calib.puntos.forEach(p=>p.y=null);
-  encaja(true); $("#hint").classList.add("hide"); pinta();
+  encaja(); $("#hint").classList.add("hide"); pinta();
 }
 let vidRAF=0;
 function cargaVideo(file){
-  const v=$("#vid"); v.src=URL.createObjectURL(file);
+  const v=$("#vid"); v.srcObject=null; v.src=URL.createObjectURL(file);
   v.onloadedmetadata = ()=>{
     S.src={kind:"vid", el:v, w:v.videoWidth, h:v.videoHeight};
-    S.marks={origen:null,objetivo:null}; S.activo="origen";
-    v.currentTime=0; encaja(true); $("#hint").classList.add("hide"); pinta();
+    limpiaMarcas(); v.currentTime=0; encaja();
+    $("#hint").classList.add("hide"); pinta();
   };
   v.onseeked = ()=>{ dibuja(); pinta(); };
 }
 async function abreDirecto(){
+  S.liveErr="";
   try{
     const st = await navigator.mediaDevices.getUserMedia({
       video:{facingMode:{ideal:"environment"}, width:{ideal:3840}, height:{ideal:2160}}, audio:false});
-    const v=$("#vid"); v.srcObject=st; await v.play();
+    const v=$("#vid"); v.src=""; v.srcObject=st; await v.play();
     S.src={kind:"live", el:v, w:v.videoWidth, h:v.videoHeight};
-    S.marks={origen:null,objetivo:null}; S.activo="origen";
-    encaja(true); $("#hint").classList.add("hide");
+    limpiaMarcas(); encaja(); $("#hint").classList.add("hide");
     const bucle=()=>{ if(S.src&&S.src.kind==="live"){dibuja(); vidRAF=requestAnimationFrame(bucle);} };
     cancelAnimationFrame(vidRAF); bucle(); pinta();
-  }catch(e){ S.liveErr=e.message; pinta(); }
+  }catch(e){ S.liveErr=e.message||String(e); pinta(); }
 }
 function congela(){
   if (!S.src||S.src.kind!=="live") return;
@@ -419,18 +468,40 @@ function congela(){
   c.width=S.src.w; c.height=S.src.h;
   c.getContext("2d").drawImage(S.src.el,0,0);
   cancelAnimationFrame(vidRAF);
-  const tr=$("#vid").srcObject?.getTracks()||[]; tr.forEach(t=>t.stop());
+  ($("#vid").srcObject?.getTracks()||[]).forEach(t=>t.stop());
   $("#vid").srcObject=null;
   if (S.med.fuente==="sensor" && S.tilt.val!==null) S.tiltFijo=S.tilt.val;
   S.src={kind:"img", el:c, w:c.width, h:c.height};
-  encaja(true); pinta();
+  encaja(); pinta();
 }
 
-/* ------------------------------------------------------- ajuste calibración */
-function resuelve3(A,b){ // minimos cuadrados normales 3x3
+/* --------------------------------------------------- ajuste calibración */
+function residuos(pts0, f, y0, phiDeg, d, hc){
+  return pts0.map(p=>{
+    const r=(+p.h-hc)/d;
+    return y0 - f*Math.tan(Math.atan(r)-phiDeg*Math.PI/180) - p.y;
+  });
+}
+const rmsDe = res => Math.sqrt(res.reduce((s,v)=>s+v*v,0)/res.length);
+
+function ajustaSoloPhi(pts0, d, hc, f, y0){
+  const J = phi => rmsDe(residuos(pts0,f,y0,phi,d,hc));
+  let a=-60, b=60; const gr=(Math.sqrt(5)-1)/2;
+  let c=b-gr*(b-a), e=a+gr*(b-a);
+  for (let i=0;i<120;i++){
+    if (J(c)<J(e)) b=e; else a=c;
+    c=b-gr*(b-a); e=a+gr*(b-a);
+    if (b-a<1e-7) break;
+  }
+  const phi=(a+b)/2;
+  return {phi, res:residuos(pts0,f,y0,phi,d,hc)};
+}
+function resuelve3(A,b){
   const n=3, M=[[0,0,0,0],[0,0,0,0],[0,0,0,0]];
-  for(let i=0;i<n;i++){ for(let j=0;j<n;j++){ let s=0; for(let k=0;k<A.length;k++) s+=A[k][i]*A[k][j]; M[i][j]=s; }
-    let s=0; for(let k=0;k<A.length;k++) s+=A[k][i]*b[k]; M[i][3]=s; }
+  for(let i=0;i<n;i++){
+    for(let j=0;j<n;j++){ let s=0; for(let k=0;k<A.length;k++) s+=A[k][i]*A[k][j]; M[i][j]=s; }
+    let s=0; for(let k=0;k<A.length;k++) s+=A[k][i]*b[k]; M[i][3]=s;
+  }
   for(let c=0;c<n;c++){
     let p=c; for(let r=c+1;r<n;r++) if(Math.abs(M[r][c])>Math.abs(M[p][c])) p=r;
     [M[c],M[p]]=[M[p],M[c]];
@@ -440,29 +511,6 @@ function resuelve3(A,b){ // minimos cuadrados normales 3x3
   }
   return [M[0][3]/M[0][0], M[1][3]/M[1][1], M[2][3]/M[2][2]];
 }
-function residuos(pts0, f, y0, phiDeg, d, hc){
-  return pts0.map(p=>{
-    const r=(+p.h-hc)/d;
-    return y0 - f*Math.tan(Math.atan(r)-phiDeg*Math.PI/180) - p.y;
-  });
-}
-function rmsDe(res){ return Math.sqrt(res.reduce((s,v)=>s+v*v,0)/res.length); }
-
-// Ajuste de un solo parámetro: φ, con f e y₀ tomados del perfil activo.
-// Sección dorada sobre φ ∈ [−60°, 60°]. Bien condicionado: 1 incógnita.
-function ajustaSoloPhi(pts0, d, hc, f, y0){
-  const J = phi => rmsDe(residuos(pts0,f,y0,phi,d,hc));
-  let a=-60, b=60, gr=(Math.sqrt(5)-1)/2;
-  let c=b-gr*(b-a), e=a+gr*(b-a);
-  for (let i=0;i<120;i++){
-    if (J(c)<J(e)){ b=e; } else { a=c; }
-    c=b-gr*(b-a); e=a+gr*(b-a);
-    if (b-a<1e-7) break;
-  }
-  const phi=(a+b)/2;
-  return {phi, res:residuos(pts0,f,y0,phi,d,hc)};
-}
-
 function ajusta(){
   const pts0 = S.calib.puntos.filter(p=>p.y!==null && isFinite(+p.h));
   const min = S.calib.tipo==="phi" ? 2 : 3;
@@ -471,15 +519,12 @@ function ajusta(){
   if (!d) return {err:"Falta la distancia horizontal."};
   if (!S.src) return {err:"Carga primero la imagen."};
 
-  // --- nivel 1: solo desalineación, con f e y₀ del perfil activo ---
   if (S.calib.tipo==="phi"){
     const p=perfil(), f=p.fRel*S.src.h, y0=p.y0Rel*S.src.h;
     const o = ajustaSoloPhi(pts0,d,hc,f,y0);
     return {tipo:"phi", f, y0, phi:o.phi, res:o.res, rms:rmsDe(o.res), n:pts0.length,
-            hImg:S.src.h, fRel:p.fRel, y0Rel:p.y0Rel,
-            delta: o.phi - (+S.calib.sensor||0)};
+            fRel:p.fRel, y0Rel:p.y0Rel, delta:o.phi-(+S.calib.sensor||0)};
   }
-  // y = A + B·r + C·(y·r)
   const A=[], b=[];
   for (const p of pts0){ const r=(+p.h-hc)/d; A.push([1,r,p.y*r]); b.push(p.y); }
   const sol = resuelve3(A,b);
@@ -487,68 +532,98 @@ function ajusta(){
   const [a1,b1,c1]=sol, t=-c1;
   const f=(a1*t-b1)/(1+t*t), y0=a1-f*t, phi=Math.atan(t)*180/Math.PI;
   if (!isFinite(f)||f<=0) return {err:"Ajuste sin sentido físico. Revisa alturas y distancia."};
-  const res = residuos(pts0,f,y0,phi,d,hc);
-  const hImg = S.src.h;
-  return {tipo:"full", f, y0, phi, rms:rmsDe(res), res, n:pts0.length, hImg,
-          fRel:f/hImg, y0Rel:y0/hImg,
-          delta: phi - (+S.calib.sensor||0)};
+  const res = residuos(pts0,f,y0,phi,d,hc), hImg=S.src.h;
+  return {tipo:"full", f, y0, phi, rms:rmsDe(res), res, n:pts0.length,
+          fRel:f/hImg, y0Rel:y0/hImg, delta:phi-(+S.calib.sensor||0)};
 }
 
 /* -------------------------------------------------------------- interfaz */
 function pinta(){
-  pintaBadges();
-  const P=$("#panel"); const m=S.modo;
-  if (m==="foto"||m==="video"||m==="directo") P.innerHTML = uiMedida(m);
-  else if (m==="calib") P.innerHTML = uiCalib();
-  else P.innerHTML = uiAjustes();
-  enlaza();
-  dibuja();
+  const P=$("#panel"), m=S.modo;
+  if (m==="calib") P.innerHTML = uiCalib();
+  else if (m==="ajustes") P.innerHTML = uiAjustes();
+  else P.innerHTML = uiMedida(m);
+  enlaza(); dibuja(); pintaBadges();
+}
+
+function navHTML(){
+  return `<h3>Colocación de la cruz</h3>
+  <div class="seg">
+    <button class="${S.paso==="fino"?"on":""}" id="pFino">Paso fino · 0,25 px</button>
+    <button class="${S.paso==="normal"?"on":""}" id="pNorm">Paso normal · 4 px</button>
+  </div>
+  <div class="navwrap">
+    <div class="pad">
+      <button class="sp"></button><button id="nU">▲</button><button class="sp"></button>
+      <button id="nL">◀</button><button id="nC">⊕</button><button id="nR">▶</button>
+      <button class="sp"></button><button id="nD">▼</button><button class="sp"></button>
+    </div>
+    <div class="navside">
+      <div class="zrow"><button id="zOut">zoom −</button><button id="zIn">zoom +</button></div>
+      <div class="zrow"><button id="bFit">Encajar imagen</button></div>
+      <div class="note" style="margin:0">Mantén pulsada una flecha para desplazamiento continuo.
+      El paso es en píxeles de imagen, así que el fino sigue siendo fino a cualquier zoom.</div>
+    </div>
+  </div>`;
 }
 
 function uiMedida(m){
-  const r = medida(), g=geom(), t=tiltUsado();
+  const R = medidas(), g = geom();
   let h = "";
 
-  // carga
-  if (m==="foto") h += `<div class="btns"><button class="p" id="bLoadImg">Cargar imagen</button>
-    ${S.src?'<button id="bFit">Encajar</button>':''}</div>`;
-  if (m==="video") h += `<div class="btns"><button class="p" id="bLoadVid">Cargar vídeo</button>
-    ${S.src&&S.src.kind==="vid"?'<button id="bFit">Encajar</button>':''}</div>
-    ${S.src&&S.src.kind==="vid"?`
-    <div class="nudge">
-      <button id="vBack10">⏪</button><button id="vBack">◀</button>
-      <span id="vTime">—</span>
-      <button id="vFwd">▶</button><button id="vFwd10">⏩</button>
+  if (m==="foto") h += `<div class="btns"><button class="p" id="bLoadImg">Cargar imagen</button></div>`;
+  if (m==="video"){
+    h += `<div class="btns"><button class="p" id="bLoadVid">Cargar vídeo</button></div>`;
+    if (S.src&&S.src.kind==="vid") h += `
+    <div class="btns">
+      <button id="vBack10">⏪ 10</button><button id="vBack">◀</button>
+      <button id="vFwd">▶</button><button id="vFwd10">10 ⏩</button>
     </div>
-    <div class="note">Avance por fotograma: ±1/50 s. Busca el fotograma de máxima altura del efecto y el del fogonazo de disparo.</div>`:""}`;
+    <div class="note">Fotograma actual: <b id="vTime">—</b>. Paso de 1/50 s.
+    Busca el fotograma del fogonazo de disparo para el origen y los de cada altura que quieras medir.</div>`;
+  }
   if (m==="directo"){
     h += S.src&&S.src.kind==="live"
       ? `<div class="btns"><button class="o" id="bFreeze">Congelar fotograma</button></div>
-         <div class="note">Al congelar se guarda también la inclinación del sensor en ese instante, y el fotograma pasa a medirse como una foto.</div>`
+         <div class="note">Al congelar se guarda la inclinación del sensor de ese instante y el fotograma pasa a medirse como una foto.</div>`
       : `<div class="btns"><button class="p" id="bLive">Abrir cámara</button></div>`;
     if (S.liveErr) h += `<div class="err">Cámara: ${S.liveErr}</div>`;
   }
 
   if (!S.src) return h + `<div class="note">Perfil de calibración activo: <b>${perfil().name}</b>.</div>`;
 
-  // fijar marcas
+  /* --- marcas --- */
   h += `<h3>Marcas</h3>
-  <div class="seg">
-    <button class="${S.activo==="origen"?"on":""}" id="segO">Origen ${S.marks.origen!==null?"✓":""}</button>
-    <button class="${S.activo==="objetivo"?"on":""}" id="segT">Objetivo ${S.marks.objetivo!==null?"✓":""}</button>
-  </div>
+  <table>
+    <tr><th>Marca</th><th>y (px)</th><th>r (%)</th><th></th></tr>
+    <tr class="${S.sel===-1?"sel":""}">
+      <td><span class="dot" style="background:#ff7b40"></span><b>Origen</b></td>
+      <td>${S.marks.origen===null?"—":fmt(S.marks.origen,1)}</td>
+      <td>—</td>
+      <td><button class="mini mSel" data-i="-1">sel.</button></td>
+    </tr>
+    ${S.marks.puntos.map((q,i)=>{
+      const rr = R && R[i] && R[i].y!==null ? fmt(100*R[i].dr,2) : "—";
+      return `<tr class="${S.sel===i?"sel":""}">
+        <td><span class="dot" style="background:${COL[i%COL.length]}"></span>
+            <input type="text" class="mLab" data-i="${i}" list="dlEtiq" value="${(q.lab||"").replace(/"/g,"&quot;")}"
+                   placeholder="etiqueta" style="font:13px inherit"></td>
+        <td>${q.y===null?"—":fmt(q.y,1)}</td>
+        <td>${rr}</td>
+        <td><button class="mini mSel" data-i="${i}">sel.</button>
+            ${S.marks.puntos.length>1?`<button class="mini mDel" data-i="${i}">×</button>`:""}</td>
+      </tr>`;
+    }).join("")}
+  </table>
   <div class="btns">
-    <button class="${S.activo==="origen"?"o":"p"}" id="bFix">Fijar ${S.activo} en la cruz</button>
-    <button id="bClr">Borrar</button>
+    <button class="${S.sel===-1?"o":"p"}" id="bFix">Fijar ${S.sel===-1?"origen":"punto "+(S.sel+1)} en la cruz</button>
+    <button id="bAdd">+ punto</button>
   </div>
-  <div class="nudge">
-    <button id="zOut">−</button><button id="zIn">+</button>
-    <span>desplazar imagen</span>
-    <button id="pUp">▲</button><button id="pDn">▼</button>
-  </div>
-  <div class="note">Mueve la imagen con el dedo hasta poner el punto bajo la cruz y pulsa fijar. La pinza amplía; a 8× o más la colocación es mejor que un píxel.</div>`;
+  ${!dentro()?'<div class="err">La cruz está fuera de la imagen.</div>':""}`;
 
-  // datos
+  h += navHTML();
+
+  /* --- datos --- */
   h += `<h3>Datos de campo</h3>
   <div class="row"><label>Distancia</label><input type="number" step="0.01" id="iD" value="${S.med.d}"><span class="u">m</span></div>
   <div class="row"><label>u(distancia)</label><input type="number" step="0.1" id="iUd" value="${S.med.ud}"><span class="u">%</span></div>
@@ -570,45 +645,54 @@ function uiMedida(m){
     if (S.tilt.err) h += `<div class="err">${S.tilt.err}</div>`;
   }
 
-  // resultado
-  h += `<h3>Resultado</h3>`;
-  if (!r) h += `<div class="res"><div class="note" style="margin:0">Fija el origen de alturas y el objetivo para obtener la medida.</div></div>`;
+  /* --- resultados --- */
+  h += `<h3>Resultados</h3>`;
+  if (!R) h += `<div class="res"><div class="note" style="margin:0">Fija el origen de alturas para empezar a medir.</div></div>`;
   else {
-    const relU = r.relU;
-    const cls = relU===null ? "v-na" : (relU<=4 ? "v-ok" : (relU<=8?"v-na":"v-no"));
-    const txt = relU===null ? "Sin evaluar"
-      : (relU<=4 ? "U ≤ 4 % · cumple el criterio interno TUR 5:1 frente a ±20 %"
-                 : "U = "+fmt(relU,2)+" % · por encima del objetivo interno de 4 %");
-    h += `<div class="res">
-      <div class="big"><s>Altura sobre el origen</s><b>${fmt(r.dH,2)} m</b></div>
-      <div class="big"><s>Fracción de la distancia</s><b>${fmt(100*r.dr,2)} %</b></div>
-      ${(+S.med.hRef)?`<div class="big"><s>Altura absoluta</s><b>${fmt(r.H,2)} m</b></div>`:""}
-      <div class="big"><s>U (k=2)</s><b>± ${fmt(r.U,2)} m</b></div>
-      <div class="kv"><span>en relativo</span><b>${relU===null?"—":fmt(relU,2)+" %"}</b></div>
-      <div class="verdict ${cls}">${txt}</div>
-    </div>
-    <h3>Presupuesto de incertidumbre</h3>
-    <table>
-      <tr><th>Contribución</th><th>u (m)</th><th>%&nbsp;de&nbsp;u<sub>c</sub></th></tr>
-      ${[["Distancia de observación",r.comp.cDist],["Focal (calibración)",r.comp.cF],
-         ["Inclinación",r.comp.cPhi],["Marcado del origen",r.comp.cPo],
-         ["Marcado del objetivo",r.comp.cPt]]
-        .map(([k,v])=>`<tr><td>${k}</td><td>${fmt(v,3)}</td><td>${fmt(100*v*v/(r.uc*r.uc),0)}</td></tr>`).join("")}
-      <tr><td><b>u<sub>c</sub> combinada</b></td><td><b>${fmt(r.uc,3)}</b></td><td>100</td></tr>
-    </table>
-    <div class="note">r<sub>origen</sub> = ${fmt(100*r.ro,2)} % · r<sub>objetivo</sub> = ${fmt(100*r.rt,2)} % ·
-    suma ${fmt(100*(r.ro+r.rt),2)} %. Cuanto más cerca de cero esa suma, menos pesa el error de inclinación y de focal:
-    conviene que origen y objetivo queden a un lado y otro del centro de la imagen.</div>`;
+    const hechos = R.filter(x=>x.y!==null);
+    if (!hechos.length) h += `<div class="res"><div class="note" style="margin:0">Origen fijado. Coloca al menos un punto.</div></div>`;
+    else {
+      h += `<table>
+        <tr><th>Marca</th><th>r (%)</th><th>Altura (m)</th><th>U (m)</th><th>U (%)</th></tr>
+        ${R.map((x,i)=>x.y===null?"":`<tr class="${S.sel===i?"sel":""}">
+          <td><span class="dot" style="background:${COL[i%COL.length]}"></span>${i+1}</td>
+          <td>${fmt(100*x.dr,2)}</td>
+          <td><b>${fmt(x.H,2)}</b></td>
+          <td>± ${fmt(x.U,2)}</td>
+          <td style="color:${x.relU<=4?"var(--ok)":(x.relU<=8?"var(--warn)":"var(--bad)")}">${fmt(x.relU,2)}</td>
+        </tr>`).join("")}
+      </table>`;
+      // diferencias entre puntos consecutivos fijados
+      if (hechos.length>1){
+        h += `<div class="note">Diferencias entre marcas: ` +
+          hechos.slice(1).map((x,k)=>`${k+1}→${k+2}: <b>${fmt(x.dH-hechos[k].dH,2)} m</b>`).join(" · ") +
+          `</div>`;
+      }
+      const sx = (S.sel>=0 && R[S.sel] && R[S.sel].y!==null) ? R[S.sel] : hechos[0];
+      h += `<h3>Presupuesto de incertidumbre · ${sx.lab||"punto"}</h3>
+      <table>
+        <tr><th>Contribución</th><th>u (m)</th><th>%&nbsp;de&nbsp;u<sub>c</sub></th></tr>
+        ${[["Distancia de observación",sx.comp.cDist],["Focal (calibración)",sx.comp.cF],
+           ["Inclinación",sx.comp.cPhi],["Marcado del origen",sx.comp.cPo],
+           ["Marcado del punto",sx.comp.cPt]]
+          .map(([k,v])=>`<tr><td>${k}</td><td>${fmt(v,3)}</td><td>${fmt(100*v*v/(sx.uc*sx.uc),0)}</td></tr>`).join("")}
+        <tr><td><b>u<sub>c</sub></b></td><td><b>${fmt(sx.uc,3)}</b></td><td>100</td></tr>
+        <tr><td><b>U (k=2)</b></td><td><b>${fmt(sx.U,3)}</b></td><td>${fmt(sx.relU,2)} %</td></tr>
+      </table>
+      <div class="note">r<sub>origen</sub> = ${fmt(100*sx.ro,2)} % · r<sub>punto</sub> = ${fmt(100*sx.rt,2)} % ·
+      suma ${fmt(100*(sx.ro+sx.rt),2)} %. Cuanto más cerca de cero esa suma, menos pesan los errores de
+      inclinación y de focal: conviene que origen y punto queden a un lado y otro del centro de la imagen.</div>`;
+    }
   }
 
-  // retícula comparadora
+  /* --- retícula --- */
   h += `<h3>Retícula de tolerancia</h3>
   <div class="row"><label>Altura nominal</label><input type="number" step="0.1" id="iHnom" value="${S.med.hNom??""}"><span class="u">m</span></div>
   <div class="row"><label>Tolerancia</label><input type="number" step="1" id="iTol" value="${S.med.tol}"><span class="u">%</span></div>
   <div class="btns"><button class="${S.reticula?"g":""}" id="bRet">${S.reticula?"Retícula activa":"Mostrar retícula"}</button></div>
-  <div class="note">Dibuja las líneas de límite sobre la imagen a partir del origen fijado. Sirve como comparador pasa / no pasa sin leer ningún número.</div>`;
+  <div class="note">Dibuja los límites sobre la imagen a partir del origen fijado: comparador pasa / no pasa sin leer números.</div>
 
-  h += `<div class="note" style="margin-top:14px">Perfil: <b>${perfil().name}</b> · fotograma ${S.src.w}×${S.src.h} px ·
+  <div class="note" style="margin-top:14px">Perfil: <b>${perfil().name}</b> · fotograma ${S.src.w}×${S.src.h} px ·
   f = ${fmt(g.f,0)} px · centro óptico ${fmt(g.y0,0)} px${S.src.w>S.src.h?' · <span style="color:var(--warn)">fotograma en horizontal: el perfil se calibró en vertical</span>':""}</div>`;
   return h;
 }
@@ -621,15 +705,15 @@ function uiCalib(){
   </div>
   <div class="note">${esPhi
     ? "Ajusta <b>una sola incógnita</b>, la inclinación óptica de la toma, tomando f e y₀ del perfil activo. Al restarle la lectura del sensor sale la desalineación δ. Es el único ajuste fiable para δ: repítelo en dos o tres fotos con inclinaciones distintas y comprueba que concuerdan dentro de una décima de grado."
-    : "Ajusta focal, centro óptico e inclinación a la vez. <b>Con las marcas en una sola vertical y una sola distancia, los tres parámetros están correlacionados</b>: el residuo puede salir bajo y los valores individuales ser poco fiables. Úsalo para obtener f e y₀ promediando varias tomas, y <b>no lo uses para la desalineación</b>."}</div>
-  <div class="btns"><button class="p" id="bLoadImg">Cargar imagen</button>${S.src?'<button id="bFit">Encajar</button>':''}</div>`;
+    : "Ajusta focal, centro óptico e inclinación a la vez. <b>Con las marcas en una sola vertical y una sola distancia los tres parámetros están correlacionados</b>: el residuo puede salir bajo y los valores individuales ser poco fiables. Úsalo para obtener f e y₀ promediando varias tomas, y <b>no lo uses para la desalineación</b>."}</div>
+  <div class="btns"><button class="p" id="bLoadImg">Cargar imagen</button></div>`;
   if (!S.src) return h;
 
   h += `<h3>Geometría del ensayo</h3>
   <div class="row"><label>Distancia horiz.</label><input type="number" step="0.1" id="cD" value="${S.calib.d}"><span class="u">cm</span></div>
-  <div class="row"><label>Altura objetivo</label><input type="number" step="0.1" id="cHc" value="${S.calib.hCam}"><span class="u">cm</span></div>
+  <div class="row"><label>Altura de lente</label><input type="number" step="0.1" id="cHc" value="${S.calib.hCam}"><span class="u">cm</span></div>
   <div class="row"><label>Lectura sensor</label><input type="number" step="0.01" id="cSen" value="${S.calib.sensor}"><span class="u">°</span></div>
-  <div class="note">La altura del objetivo sobre el suelo es imprescindible: sin ella la inclinación y la altura de cámara son indistinguibles y el ajuste no significa nada.</div>
+  <div class="note">La altura de la lente sobre el suelo es imprescindible: sin ella la inclinación y la altura de cámara son indistinguibles y el ajuste no significa nada.</div>
 
   <h3>Puntos</h3>
   <table><tr><th>#</th><th>Altura (cm)</th><th>y (px)</th><th></th></tr>
@@ -637,12 +721,12 @@ function uiCalib(){
     <td>${i+1}</td>
     <td><input type="number" step="0.1" class="cH" data-i="${i}" value="${p.h??""}"></td>
     <td>${p.y===null?"—":fmt(p.y,1)}</td>
-    <td><button class="cFix" data-i="${i}" style="padding:5px 8px;font-size:12px">fijar</button></td>
+    <td><button class="mini cFix" data-i="${i}">fijar</button></td>
   </tr>`).join("")}</table>
   <div class="btns"><button id="cAdd">+ punto</button><button id="cDel">− punto</button>
-    <button class="p" id="cRun">Ajustar</button></div>
-  <div class="nudge"><button id="zOut">−</button><button id="zIn">+</button><span>desplazar</span>
-    <button id="pUp">▲</button><button id="pDn">▼</button></div>`;
+    <button class="p" id="cRun">Ajustar</button></div>`;
+
+  h += navHTML();
 
   if (o){
     if (o.err) h += `<div class="err">${o.err}</div>`;
@@ -653,7 +737,7 @@ function uiCalib(){
       <div class="kv"><span>focal f</span><b>${fmt(o.f,1)} px</b></div>
       <div class="kv"><span>f / altura de fotograma</span><b>${fmt(o.fRel,5)}</b></div>
       <div class="kv"><span>centro óptico y₀</span><b>${fmt(o.y0,1)} px (${fmt(o.y0Rel,5)})</b></div>`
-      : `<div class="kv"><span>f e y₀ tomados del perfil</span><b>${fmt(o.fRel,5)} / ${fmt(o.y0Rel,5)}</b></div>`}
+      : `<div class="kv"><span>f e y₀ del perfil</span><b>${fmt(o.fRel,5)} / ${fmt(o.y0Rel,5)}</b></div>`}
       <div class="kv"><span>inclinación óptica φ</span><b>${(o.phi>=0?"+":"")+fmt(o.phi,3)}°</b></div>
       <div class="kv"><span>lectura del sensor</span><b>${(+S.calib.sensor>=0?"+":"")+fmt(+S.calib.sensor,2)}°</b></div>
       <div class="big" style="margin-top:6px"><s>Desalineación δ</s><b>${(o.delta>=0?"+":"")+fmt(o.delta,3)}°</b></div>
@@ -662,12 +746,12 @@ function uiCalib(){
         ?"Residuo alto: revisa alturas, distancia y el enfoque de las marcas"
         :"Ajuste consistente"}</div></div>
       <div class="note">Residuos por punto: ${o.res.map(v=>fmt(v,1)).join(" / ")} px.
-      Un residuo que crece hacia los extremos indica distorsión óptica o una focal mal resuelta;
-      un desplazamiento constante indica error en la altura del objetivo.
+      Un residuo que crece hacia los extremos indica distorsión óptica o focal mal resuelta;
+      un desplazamiento constante indica error en la altura de la lente.
       δ equivale a un sesgo de ${fmt(100*Math.abs(o.delta)*Math.PI/180,2)} % de la distancia de observación si no se corrige.</div>
       <div class="btns">
-        ${o.tipo==="full"?'<button class="g" id="cSave">Guardar como perfil nuevo</button>':
-                          '<button class="g" id="cSaveD">Aplicar δ al perfil activo</button>'}
+        ${o.tipo==="full"?'<button class="g" id="cSave">Guardar como perfil nuevo</button>'
+                         :'<button class="g" id="cSaveD">Aplicar δ al perfil activo</button>'}
       </div>`;
     }
   }
@@ -687,7 +771,7 @@ function uiAjustes(){
     <div class="kv"><span>u(f) relativa</span><b>${fmt(p.uF,2)} %</b></div>
   </div>
   <div class="note">${p.note||""}</div>
-  <div class="btns">${S.perfiles.length>1?'<button id="aDel">Borrar este perfil</button>':""}</div>
+  ${S.perfiles.length>1?'<div class="btns"><button id="aDel">Borrar este perfil</button></div>':""}
 
   <h3>Incertidumbres de entrada</h3>
   <div class="row"><label>u(marcado)</label><input type="number" step="0.5" id="aUpx" value="${S.med.upx}"><span class="u">px</span></div>
@@ -705,7 +789,7 @@ function uiAjustes(){
   <div class="note">Herramienta de trabajo interno. No sustituye a un organismo notificado ni a un laboratorio de ensayo.
   Para un expediente de conformidad, la trazabilidad de la distancia de observación y la calibración del dispositivo
   deben documentarse aparte.</div>
-  <div class="note"><a href="nivel.html" style="color:var(--acc)">Página de nivel y diagnóstico de sensores</a></div>`;
+  <div class="note"><a href="nivel.html">Página de nivel y diagnóstico de sensores</a></div>`;
 }
 
 /* --------------------------------------------------------- vinculaciones */
@@ -717,20 +801,45 @@ function enlaza(){
   on("bLoadVid","click",()=>$("#fVid").click());
   on("bLive","click",abreDirecto);
   on("bFreeze","click",congela);
-  on("bFit","click",()=>{encaja(true);dibuja();pintaBadges();});
+  on("bFit","click",()=>{encaja();dibuja();pintaBadges();});
   on("bSens","click",activaSensores);
   on("bFreezeT","click",()=>{ if(S.tilt.val!==null){S.tiltFijo=S.tilt.val; pinta();} });
   on("bUnfreeze","click",()=>{ S.tiltFijo=null; pinta(); });
 
-  on("segO","click",()=>{S.activo="origen";pinta();});
-  on("segT","click",()=>{S.activo="objetivo";pinta();});
-  on("bFix","click",()=>{ S.marks[S.activo]=centroImg().y;
-    if(S.activo==="origen"&&S.marks.objetivo===null) S.activo="objetivo"; pinta(); });
-  on("bClr","click",()=>{ S.marks[S.activo]=null; pinta(); });
+  // marcas
+  $$(".mSel").forEach(b=>b.addEventListener("click",e=>{ S.sel=+e.target.dataset.i; pinta(); }));
+  $$(".mDel").forEach(b=>b.addEventListener("click",e=>{
+    const i=+e.target.dataset.i; S.marks.puntos.splice(i,1);
+    if (S.sel>=S.marks.puntos.length) S.sel=S.marks.puntos.length-1;
+    pinta();
+  }));
+  $$(".mLab").forEach(el=>el.addEventListener("change",e=>{
+    S.marks.puntos[+e.target.dataset.i].lab = e.target.value; pinta();
+  }));
+  on("bFix","click",()=>{
+    if (!dentro()) return;
+    const y = centroImg().y;
+    if (S.sel===-1){
+      S.marks.origen = y;
+      const sig = S.marks.puntos.findIndex(q=>q.y===null);
+      S.sel = sig>=0 ? sig : 0;
+    } else S.marks.puntos[S.sel].y = y;
+    pinta();
+  });
+  on("bAdd","click",()=>{
+    S.marks.puntos.push({lab:"", y:null});
+    S.sel = S.marks.puntos.length-1; pinta();
+  });
   on("bRet","click",()=>{ S.reticula=!S.reticula; pinta(); });
 
-  on("zIn","click",()=>zoom(1.6)); on("zOut","click",()=>zoom(1/1.6));
-  on("pUp","click",()=>desplaza(-18)); on("pDn","click",()=>desplaza(18));
+  // navegación
+  on("pFino","click",()=>{S.paso="fino";pinta();});
+  on("pNorm","click",()=>{S.paso="normal";pinta();});
+  repite($("#nU"),()=>mueve(0,-1)); repite($("#nD"),()=>mueve(0,1));
+  repite($("#nL"),()=>mueve(-1,0)); repite($("#nR"),()=>mueve(1,0));
+  on("nC","click",()=>{ if(S.src){ S.view.tx=W/2-(S.src.w/2)*S.view.s; S.view.ty=H/2-(S.src.h/2)*S.view.s;
+    limita(); dibuja(); pintaBadges(); } });
+  repite($("#zIn"),()=>zoom(1.25)); repite($("#zOut"),()=>zoom(1/1.25));
 
   num("iD","d",S.med); num("iUd","ud",S.med); num("iHref","hRef",S.med);
   num("iHnom","hNom",S.med); num("iTol","tol",S.med); num("iPhi","phiManual",S.med);
@@ -738,39 +847,39 @@ function enlaza(){
 
   // vídeo
   const v=$("#vid"), paso=1/50;
-  const salta=dt=>{ if(S.src&&S.src.kind==="vid"){ v.currentTime=Math.max(0,Math.min(v.duration||0,v.currentTime+dt)); } };
-  on("vBack","click",()=>salta(-paso)); on("vFwd","click",()=>salta(paso));
+  const salta=dt=>{ if(S.src&&S.src.kind==="vid") v.currentTime=Math.max(0,Math.min(v.duration||0,v.currentTime+dt)); };
+  repite($("#vBack"),()=>salta(-paso)); repite($("#vFwd"),()=>salta(paso));
   on("vBack10","click",()=>salta(-10*paso)); on("vFwd10","click",()=>salta(10*paso));
   const vt=$("#vTime"); if(vt&&S.src&&S.src.kind==="vid") vt.textContent=fmt(v.currentTime,3)+" s";
 
   // calibración
   num("cD","d",S.calib); num("cHc","hCam",S.calib); num("cSen","sensor",S.calib);
-  document.querySelectorAll(".cH").forEach(e=>e.addEventListener("change",ev=>{
+  $$(".cH").forEach(e=>e.addEventListener("change",ev=>{
     S.calib.puntos[+ev.target.dataset.i].h = ev.target.value===""?null:+ev.target.value; }));
-  document.querySelectorAll(".cFix").forEach(e=>e.addEventListener("click",ev=>{
+  $$(".cFix").forEach(e=>e.addEventListener("click",ev=>{
+    if(!dentro()) return;
     S.calib.puntos[+ev.target.dataset.i].y = centroImg().y; pinta(); }));
   on("kFull","click",()=>{S.calib.tipo="full";S.calib.out=null;pinta();});
   on("kPhi","click",()=>{S.calib.tipo="phi";S.calib.out=null;pinta();});
-  on("cSaveD","click",()=>{
-    const o=S.calib.out; if(!o||o.err) return;
-    const p=perfil();
-    if(!confirm("¿Fijar δ = "+fmt(o.delta,3)+"° en el perfil «"+p.name+"»?\n\nValor actual: "+fmt(p.delta,3)+"°")) return;
-    p.delta=+o.delta.toFixed(4);
-    p.note=(p.note||"")+" · δ reajustada "+fmt(o.delta,3)+"°";
-    guarda(); S.modo="ajustes"; sincTabs(); pinta();
-  });
   on("cAdd","click",()=>{S.calib.puntos.push({h:null,y:null});pinta();});
   on("cDel","click",()=>{S.calib.puntos.pop();pinta();});
   on("cRun","click",()=>{S.calib.out=ajusta();pinta();});
   on("cSave","click",()=>{
     const o=S.calib.out; if(!o||o.err) return;
-    const name=prompt("Nombre del perfil (incluye modo de captura y zoom):",
-      "perfil "+S.src.w+"×"+S.src.h);
+    const name=prompt("Nombre del perfil (incluye modo de captura y zoom):","perfil "+S.src.w+"×"+S.src.h);
     if(!name) return;
     const id="p"+Date.now();
     S.perfiles.push({id,name,fRel:o.fRel,y0Rel:o.y0Rel,delta:o.delta,uF:0.40,
       note:"Ajuste de "+o.n+" puntos, rms "+fmt(o.rms,2)+" px, "+S.src.w+"×"+S.src.h+" px"});
     S.perfilId=id; guarda(); S.modo="ajustes"; sincTabs(); pinta();
+  });
+  on("cSaveD","click",()=>{
+    const o=S.calib.out; if(!o||o.err) return;
+    const p=perfil();
+    if(!confirm("¿Fijar δ = "+fmt(o.delta,3)+"° en el perfil «"+p.name+"»?\n\nValor actual: "+fmt(p.delta,3)+"°")) return;
+    p.delta=+o.delta.toFixed(4);
+    p.note=(p.note||"")+" · δ reajustada a "+fmt(o.delta,3)+"°";
+    guarda(); S.modo="ajustes"; sincTabs(); pinta();
   });
 
   // ajustes
@@ -782,10 +891,8 @@ function enlaza(){
   });
   num("aUpx","upx",S.med); num("aUphi","uphi",S.med);
 }
-function sincTabs(){
-  document.querySelectorAll(".tab").forEach(b=>b.classList.toggle("on", b.dataset.m===S.modo));
-}
-document.querySelectorAll(".tab").forEach(b=>b.addEventListener("click",()=>{
+function sincTabs(){ $$(".tab").forEach(b=>b.classList.toggle("on", b.dataset.m===S.modo)); }
+$$(".tab").forEach(b=>b.addEventListener("click",()=>{
   S.modo=b.dataset.m; sincTabs();
   if (S.modo==="calib" && S.calib.puntos.length===0)
     S.calib.puntos=[{h:null,y:null},{h:null,y:null},{h:null,y:null},{h:null,y:null},{h:null,y:null}];
@@ -794,6 +901,9 @@ document.querySelectorAll(".tab").forEach(b=>b.addEventListener("click",()=>{
 $("#fImg").addEventListener("change",e=>{ if(e.target.files[0]) cargaImagen(e.target.files[0]); e.target.value=""; });
 $("#fVid").addEventListener("change",e=>{ if(e.target.files[0]) cargaVideo(e.target.files[0]); e.target.value=""; });
 
+/* El lienzo se redimensiona cuando cambia el elemento, no cuando cambia la
+   ventana: al maximizar, el panel reflueye y el rect no es fiable todavía. */
+if (window.ResizeObserver) new ResizeObserver(()=>dimensiona()).observe($("#stage"));
 window.addEventListener("resize",dimensiona);
 window.addEventListener("orientationchange",()=>setTimeout(dimensiona,250));
 dimensiona(); pinta();
