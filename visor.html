@@ -1167,14 +1167,17 @@ function uiCalib(){
     h += `<h3>Capturas guardadas</h3><table>
       <tr><th>Imagen</th><th>Objetivo</th><th>Fotograma</th><th></th></tr>
       ${S.capturas.map(c=>`<tr>
-        <td><img src="${urlDe(c)}" style="width:76px;border-radius:5px;display:block;border:1px solid var(--line)"></td>
+        <td><a href="${urlDe(c)}" download="calib-${c.camLabel.replace(/\s+/g,"")}-${c.w}x${c.h}.jpg">
+            <img src="${urlDe(c)}" style="width:76px;border-radius:5px;display:block;border:1px solid var(--line)"></a></td>
         <td style="font-size:11.5px">${c.camLabel||"—"}<br>
             <span style="color:var(--dim)">${new Date(c.ts).toLocaleString("es-ES",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}</span></td>
         <td style="font-size:11.5px">${c.w}×${c.h}<br><span style="color:var(--dim)">${fmt(c.w/c.h,3)}</span></td>
         <td><button class="mini capUsa" data-id="${c.id}">calibrar</button>
             <button class="mini capDel" data-id="${c.id}">×</button></td></tr>`).join("")}
     </table>
-    <div class="note">Se conservan aunque cierres la página. Pulsa «calibrar» para trabajar sobre una de ellas.</div>`;
+    <div class="note">Se conservan aunque cierres la página, pero <b>solo en este navegador y en este aparato</b>:
+    el almacén es local y no se sincroniza. Pulsa la miniatura para descargar la imagen y así poder abrirla en otro
+    equipo con «Archivo». Pulsa «calibrar» para trabajar sobre ella aquí.</div>`;
   }
 
   if (!S.src || vivo) return h;
@@ -1274,6 +1277,24 @@ function uiAjustes(){
   <div class="row"><label>Error del cabeceo</label><input type="number" step="0.05" id="aUphi" value="${S.med.uphi}"><span class="u">°</span></div>
   <div class="note">u(marcado) es la repetibilidad al poner la cruz sobre el punto; 2 a 3 px es realista con zoom.
   u(inclinación) cubre el ruido del sensor más el residuo de la desalineación.</div>
+
+  <h3>Trasladar perfiles entre aparatos</h3>
+  <div class="btns">
+    <button id="aExp">Exportar perfiles</button>
+    <button id="aImp">Importar</button>
+  </div>
+  <textarea id="aJson" placeholder="Aquí sale el texto al exportar; pega aquí el texto recibido y pulsa Importar"
+    style="width:100%;min-height:90px;background:#0d1117;color:var(--txt);border:1px solid var(--line);
+    border-radius:6px;padding:8px;font:11.5px ui-monospace,monospace"></textarea>
+  <div class="note">Los perfiles y las capturas se guardan en el almacén local del navegador, así que
+  <b>no pasan del móvil al ordenador ni al revés</b>. Exporta el texto, pásalo por donde quieras y pégalo en el
+  otro equipo.
+  <br><br>Al importar, el perfil llega <b>sin asociar a ninguna cámara</b>: el identificador de objetivo es
+  distinto en cada navegador, así que la asociación automática se pierde y habrá que elegir el perfil a mano.
+  La focal, el centro óptico y la desalineación sí se conservan, que es lo que cuesta medir.
+  <br><br>Aun así, <b>calibra en el aparato donde vayas a medir</b>. Un perfil describe una cámara concreta en un
+  modo de captura concreto: traerlo de otro sitio solo tiene sentido para conservar un respaldo o para pasárselo
+  a alguien con el mismo equipo.</div>
 
   <h3>Un perfil por modo de captura</h3>
   <div class="note">La focal en píxeles depende de la resolución y del recorte del sensor, así que
@@ -1416,6 +1437,24 @@ function enlaza(){
     S.perfilId=S.perfiles[0].id; guarda(); pinta();
   });
   num("aUpx","upx",S.med); num("aUphi","uphi",S.med);
+  on("aExp","click",()=>{
+    $("#aJson").value=JSON.stringify({vpd:1, fecha:new Date().toISOString(), perfiles:S.perfiles},null,1);
+    $("#aJson").select(); navigator.clipboard?.writeText($("#aJson").value);});
+  on("aImp","click",()=>{
+    let o; try{ o=JSON.parse($("#aJson").value); }catch(e){ alert("El texto no es válido."); return; }
+    const lista=Array.isArray(o)?o:(o&&Array.isArray(o.perfiles)?o.perfiles:null);
+    if(!lista){ alert("No encuentro perfiles en ese texto."); return; }
+    let n=0;
+    for(const q of lista){
+      if(!q||!q.fRel||!q.y0Rel) continue;
+      S.perfiles.push({id:"i"+Date.now()+"_"+(n++), name:(q.name||"perfil importado")+" (importado)",
+        fRel:+q.fRel, y0Rel:+q.y0Rel, delta:+(q.delta||0), uF:+(q.uF||0.40),
+        w:q.w||null, h:q.h||null, camId:"",          // el identificador de cámara no es portable
+        note:(q.note||"")+" · importado "+new Date().toISOString().slice(0,10)});
+    }
+    if(!n){ alert("Ninguno de los perfiles del texto era utilizable."); return; }
+    guarda(); alert(n+" perfil(es) importado(s). Tendrás que elegirlos a mano: la asociación a cámara no viaja.");
+    pinta();});
 }
 function sincTabs(){ $$(".tab").forEach(b=>b.classList.toggle("on", b.dataset.m===S.modo)); }
 $$(".tab").forEach(b=>b.addEventListener("click",()=>{
