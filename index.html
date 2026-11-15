@@ -142,15 +142,13 @@ const S = {
   perfiles: JSON.parse(localStorage.getItem("vpd.perfiles")||"null") || [PERFIL_BASE],
   perfilId: localStorage.getItem("vpd.perfilId") || PERFIL_BASE.id,
   med: JSON.parse(localStorage.getItem("vpd.med")||"null") || {
-    d:100, ud:1.0, hRef:0, tol:20, upx:3, uphi:0.3, fuente:"sensor"
+    d:100, ud:1.0, hRef:0, tol:20, upx:3, uphi:0.3, phiManual:"", rollManual:""
   },
   src:null,
   marks:{ origen:null, puntos:[{lab:"Altura de funcionamiento", x:null, y:null}] },
   sel:-1,                 // -1 = origen ; 0..n-1 = índice de punto
   paso:"fino",            // fino | normal
   view:{s:1, tx:0, ty:0, fit:1},
-  tilt:{val:null, roll:null, n:0, src:"—", err:""},
-  tiltFijo:null, rollFijo:null,
   calib:{ puntos:[], d:100, hCam:0, sensor:0, out:null, tipo:"phi" },
   reticula:false,
   liveErr:""
@@ -261,16 +259,27 @@ async function activaSensores(){
   sensorOn=true;
   pinta();
 }
+/* De dónde salen los ángulos.
+
+   Solo la vista en directo puede tomarlos del sensor, porque solo ahí el
+   móvil está apuntando a lo que se mide. Una foto o un vídeo se capturaron
+   antes: su inclinación es un dato de la toma que hay que introducir, no
+   algo que el sensor pueda decir ahora. Las entradas manuales recogen la
+   LECTURA DEL SENSOR anotada en la toma; la desalineación δ la aplica la
+   aplicación. Congelar un fotograma del directo solo rellena esas casillas,
+   así que la vía es única y el valor queda visible y editable. */
+const esVivo = () => !!(S.src && S.src.kind==="live");
+const vacio  = v => v===""||v===null||v===undefined||!isFinite(+v);
+
 function tiltUsado(){
-  if (S.med.fuente==="manual") return +(S.med.phiManual ?? 0);
-  if (S.tiltFijo!==null) return S.tiltFijo + perfil().delta;
-  const m = media().p;
-  return m===null ? null : m + perfil().delta;
+  if (esVivo()){ const m=media().p; return m===null?null:m+perfil().delta; }
+  if (vacio(S.med.phiManual)) return 0;          // a plomo supuesto, se avisa
+  return +S.med.phiManual + perfil().delta;
 }
+function phiSupuesto(){ return !esVivo() && vacio(S.med.phiManual); }
 function rollUsado(){
-  if (S.med.fuente==="manual") return (S.med.rollManual===""||S.med.rollManual===undefined)?null:+S.med.rollManual;
-  if (S.rollFijo!==null) return S.rollFijo;
-  return media().r;
+  if (esVivo()) return media().r;
+  return vacio(S.med.rollManual) ? null : +S.med.rollManual;
 }
 /* Umbrales de balanceo lateral. Recomendación propia, no requisito normativo:
    mantienen la contribución del balanceo por debajo del 1 % de la altura en
@@ -432,7 +441,7 @@ function cruz(){
 }
 function pintaBadges(){
   const t=tiltUsado();
-  const fij = S.tiltFijo!==null ? " ⏸" : "";
+  const fij = esVivo() ? "" : " ⏸";   // pausa = ángulo de la toma, no lectura viva
   const tb=$("#tiltbadge"), zb=$("#zoombadge"), rl=rollUsado();
   tb.innerHTML = (t===null ? "φ —" : "φ "+(t>=0?"+":"")+fmt(t,2)+"°"+fij)
     + "<br><span style=\"color:"
@@ -559,11 +568,10 @@ function congela(){
   cancelAnimationFrame(vidRAF);
   ($("#vid").srcObject?.getTracks()||[]).forEach(t=>t.stop());
   $("#vid").srcObject=null;
-  if (S.med.fuente==="sensor"){                  // fija los dos ángulos del instante
-    const M=media();
-    if (M.p!==null) S.tiltFijo=M.p;
-    if (M.r!==null) S.rollFijo=M.r;
-  }
+  const M=media();                  // los ángulos del instante pasan a ser datos de la toma
+  if (M.p!==null) S.med.phiManual  = +M.p.toFixed(2);
+  if (M.r!==null) S.med.rollManual = +M.r.toFixed(2);
+  guarda();
   S.src={kind:"img", el:c, w:c.width, h:c.height};
   encaja(); pinta();
 }
@@ -728,21 +736,37 @@ function uiMedida(m){
 
   if (!S.src) return h + `<div class="note">Perfil de calibración activo: <b>${perfil().name}</b>.</div>`;
 
-  /* --- encuadre: los dos ángulos del móvil --- */
+  /* --- ángulos de la toma --- */
   const rl = rollUsado(), sem = semaforoRoll(rl), tt = tiltUsado();
-  h += `<h3>Encuadre</h3>
-  <div class="res">
-    <div class="big"><s>Balanceo lateral ρ</s><b style="color:${sem.cls==="v-ok"?"var(--ok)":(sem.cls==="v-no"?"var(--bad)":"var(--warn)")}">${rl===null?"—":(rl>=0?"+":"")+fmt(rl,2)+"°"}</b></div>
-    <div class="big"><s>Cabeceo φ (con δ)</s><b>${tt===null?"—":(tt>=0?"+":"")+fmt(tt,2)+"°"}</b></div>
-    <div class="verdict ${sem.cls}">${sem.txt}</div>
-  </div>
-  <div class="note"><b>El cabeceo no tiene límite</b>: el modelo lo usa como dato, así que inclinar adelante o atrás
-  no introduce error por sí mismo. Lo que importa es que origen y punto queden a un lado y otro del centro de la imagen,
-  y eso se vigila con la suma r<sub>origen</sub> + r<sub>punto</sub> del presupuesto, no con el ángulo.
-  <b>El balanceo sí es un error directo</b>, porque gira el eje y de la imagen respecto a la vertical real.</div>
-  ${S.med.fuente==="sensor" ? `<div class="btns">
-    ${S.rollFijo!==null?'<button id="bUnfreezeR">Liberar balanceo</button>':'<button id="bFreezeR">Congelar balanceo</button>'}
-  </div>` + diagHTML() : ""}`;
+  if (esVivo()){
+    h += `<h3>Encuadre en directo</h3>
+    <div class="res">
+      <div class="big"><s>Balanceo lateral ρ</s><b style="color:${sem.cls==="v-ok"?"var(--ok)":(sem.cls==="v-no"?"var(--bad)":"var(--warn)")}">${rl===null?"—":(rl>=0?"+":"")+fmt(rl,2)+"°"}</b></div>
+      <div class="big"><s>Cabeceo φ (con δ)</s><b>${tt===null?"—":(tt>=0?"+":"")+fmt(tt,2)+"°"}</b></div>
+      <div class="verdict ${sem.cls}">${sem.txt}</div>
+    </div>
+    ${sensorOn?"":'<div class="btns"><button class="p" id="bSens">Activar sensores</button></div>'}
+    <div class="note">Al congelar el fotograma, estos dos valores se copian a las casillas de la toma,
+    donde quedan visibles y editables.</div>` + diagHTML();
+  } else {
+    h += `<h3>Ángulos de la toma</h3>
+    <div class="row"><label>Cabeceo φ</label><input type="number" step="0.01" id="iPhi"
+      value="${S.med.phiManual??""}" placeholder="lectura del sensor en la toma"><span class="u">°</span></div>
+    <div class="row"><label>Balanceo ρ</label><input type="number" step="0.01" id="iRoll"
+      value="${S.med.rollManual??""}" placeholder="opcional"><span class="u">°</span></div>
+    <div class="note">Son datos <b>de la toma</b>, no del momento actual: introduce la lectura que anotaste
+    al disparar. La aplicación añade la desalineación δ = ${(perfil().delta>=0?"+":"")+fmt(perfil().delta,3)}° al cabeceo,
+    así que teclea el valor crudo del sensor. El sensor de ahora no sabe nada de la inclinación que tenía la cámara
+    cuando se hizo la foto, por eso no se usa aquí.</div>
+    ${phiSupuesto()?`<div class="verdict v-na">Cabeceo no registrado: se supone φ = 0 (cámara a plomo).
+      Con el origen sobre el punto de disparo el error se cancela en gran parte, pero
+      sube u(φ) en Ajustes para que el presupuesto lo refleje.</div>`:""}
+    ${rl!==null?`<div class="verdict ${sem.cls}">Balanceo introducido: ${sem.txt}</div>`:""}`;
+  }
+  h += `<div class="note"><b>El cabeceo no tiene límite</b>: el modelo lo usa como dato, así que inclinar adelante
+  o atrás no introduce error por sí mismo. Lo que importa es que origen y punto queden a un lado y otro del centro
+  de la imagen, y eso se vigila con la suma r<sub>origen</sub> + r<sub>punto</sub> del presupuesto, no con el ángulo.
+  <b>El balanceo sí es un error directo</b>, porque gira el eje y de la imagen respecto a la vertical real.</div>`;
 
   /* --- marcas --- */
   h += `<h3>Marcas</h3>
@@ -781,24 +805,8 @@ function uiMedida(m){
   h += `<h3>Datos de campo</h3>
   <div class="row"><label>Distancia</label><input type="number" step="0.01" id="iD" value="${S.med.d}"><span class="u">m</span></div>
   <div class="row"><label>u(distancia)</label><input type="number" step="0.1" id="iUd" value="${S.med.ud}"><span class="u">%</span></div>
-  <div class="row"><label>Cota del origen</label><input type="number" step="0.01" id="iHref" value="${S.med.hRef}"><span class="u">m</span></div>
-  <div class="row"><label>Inclinación</label>
-    <select id="iFuente">
-      <option value="sensor"${S.med.fuente==="sensor"?" selected":""}>Sensor del móvil</option>
-      <option value="manual"${S.med.fuente==="manual"?" selected":""}>Manual</option>
-    </select></div>`;
-  if (S.med.fuente==="manual")
-    h += `<div class="row"><label>φ cabeceo</label><input type="number" step="0.01" id="iPhi" value="${S.med.phiManual??0}"><span class="u">°</span></div>
-          <div class="row"><label>ρ balanceo</label><input type="number" step="0.01" id="iRoll" value="${S.med.rollManual??""}"><span class="u">°</span></div>`;
-  else {
-    h += `<div class="btns">
-      ${sensorOn?"":'<button class="p" id="bSens">Activar sensores</button>'}
-      ${S.tiltFijo!==null?'<button id="bUnfreeze">Liberar inclinación</button>':'<button id="bFreezeT">Congelar inclinación</button>'}
-    </div>
-    <div class="note">Fuente: ${SENS.pref==="ori"?"orientación":"gravedad"}, ${SENS[SENS.pref].n} muestras.
-    Corrección de desalineación aplicada: ${(perfil().delta>=0?"+":"")+fmt(perfil().delta,3)}°.</div>`;
-    if (SENS.err) h += `<div class="err">${SENS.err}</div>`;
-  }
+  <div class="row"><label>Cota del origen</label><input type="number" step="0.01" id="iHref" value="${S.med.hRef}"><span class="u">m</span></div>`;
+  if (SENS.err) h += `<div class="err">${SENS.err}</div>`;
 
   /* --- resultados --- */
   h += `<h3>Resultados</h3>`;
@@ -966,16 +974,12 @@ function enlaza(){
   on("bLoadDoc","click",()=>$("#fDoc").click());
   on("bLoadVid","click",()=>$("#fVid").click());
   on("bLoadVidDoc","click",()=>$("#fVidDoc").click());
-  on("bFreezeR","click",()=>{ const r=media().r; if(r!==null){S.rollFijo=r; pinta();} });
-  on("bUnfreezeR","click",()=>{ S.rollFijo=null; pinta(); });
   on("sOri","click",()=>{SENS.pref="ori"; SENS.buf=[]; pinta();});
   on("sGrav","click",()=>{SENS.pref="grav"; SENS.buf=[]; pinta();});
   on("bLive","click",abreDirecto);
   on("bFreeze","click",congela);
   on("bFit","click",()=>{encaja();dibuja();pintaBadges();});
   on("bSens","click",activaSensores);
-  on("bFreezeT","click",()=>{ const p=media().p; if(p!==null){S.tiltFijo=p; pinta();} });
-  on("bUnfreeze","click",()=>{ S.tiltFijo=null; pinta(); });
 
   // marcas
   $$(".mSel").forEach(b=>b.addEventListener("click",e=>{ S.sel=+e.target.dataset.i; pinta(); }));
@@ -1015,7 +1019,6 @@ function enlaza(){
   num("iD","d",S.med); num("iUd","ud",S.med); num("iHref","hRef",S.med);
   num("iHnom","hNom",S.med); num("iTol","tol",S.med);
   num("iPhi","phiManual",S.med); num("iRoll","rollManual",S.med);
-  on("iFuente","change",e=>{S.med.fuente=e.target.value;guarda();pinta();});
 
   // vídeo
   const v=$("#vid"), paso=1/50;
