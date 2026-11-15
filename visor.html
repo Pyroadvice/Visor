@@ -148,7 +148,8 @@ const S = {
   perfiles: JSON.parse(localStorage.getItem("vpd.perfiles")||"null") || [PERFIL_BASE],
   perfilId: localStorage.getItem("vpd.perfilId") || PERFIL_BASE.id,
   med: JSON.parse(localStorage.getItem("vpd.med")||"null") || {
-    d:100, ud:1.0, hRef:0, tol:20, upx:3, uphi:0.3, phiManual:"", rollManual:""
+    d:100, ud:1.0, hRef:0, tol:20, upx:3, uphi:0.3, phiManual:"", rollManual:"",
+    obliq:false, angulos:"15, 30", horiz:false, alturas:"20, 30"
   },
   src:null,
   marks:{ origen:null, puntos:[{lab:"Altura de funcionamiento", x:null, y:null}] },
@@ -417,6 +418,8 @@ function dibuja(){
   if (S.modo==="calib" && S.src){
     S.calib.puntos.forEach(p=>{ if(p.y!==null) linea(p.y,"#3fb950",fmt(p.h,1)+" cm",false); });
   }
+  if (S.med.obliq) dibujaOblicuas();
+  if (S.med.horiz) dibujaHorizontales();
   if (S.reticula) dibujaReticula();
   cruz();
 }
@@ -435,6 +438,72 @@ function linea(iy,col,lab,activa,ix){
   ctx.fillStyle="rgba(0,0,0,.6)"; ctx.fillRect(4,py-16,w+8,14);
   ctx.fillStyle=col; ctx.fillText(lab, 8, py-5);
 }
+const lista = t => String(t||"").split(/[,;\s]+/).map(x=>parseFloat(x.replace(",","."))).filter(x=>isFinite(x)&&x>0);
+
+/* Líneas de desviación respecto a la vertical, desde el punto de disparo.
+
+   Son RECTAS en la imagen: una recta del espacio se proyecta como recta, y la
+   generatriz del cono de desviación lo es. Lo que no es trivial es su escala
+   lateral. Un punto a altura ΔH sobre el disparo y desplazado ΔH·tan(θ) queda,
+   con la cámara cabeceada φ, a una distancia al plano imagen distinta de d:
+
+     separación lateral en píxeles = f·(ΔH/d)·tan(θ) / (r·sen φ + cos φ)
+     fila de imagen                = yDe(r_origen + ΔH/d)
+
+   Omitir ese denominador parece inocuo y no lo es: con 10° de cabeceo el error
+   alcanza 414 px a 150 m de altura, y con 30° se dispara. Se traza punto a
+   punto porque así el recorte y el caso límite de r·sen φ + cos φ → 0, cuando
+   el punto se va al infinito, se resuelven solos.                            */
+function dibujaOblicuas(){
+  const g=geom(); if(!g||S.marks.origen===null) return;
+  const d=+S.med.d; if(!d) return;
+  const ro=g.r(S.marks.origen.y), xo=S.marks.origen.x;
+  if(xo===null||xo===undefined) return;
+  const angs=lista(S.med.angulos);
+  const cols=["#bc8cff","#39c5cf","#f778ba","#d29922"];
+  ctx.font="600 11px ui-monospace,monospace";
+  // vertical de referencia
+  traza(g,ro,xo,0,"rgba(255,255,255,.45)",null);
+  angs.forEach((a,k)=>{
+    const col=cols[k%cols.length];
+    traza(g,ro,xo,+a,col,a+"°"); traza(g,ro,xo,-a,col,null);
+  });
+}
+function traza(g,ro,xo,angDeg,col,lab){
+  const th=angDeg*Math.PI/180, tg=Math.tan(th);
+  const sp=Math.sin(g.phi), cp=Math.cos(g.phi);
+  ctx.strokeStyle=col; ctx.lineWidth=angDeg===0?1:1.6; ctx.setLineDash(angDeg===0?[4,6]:[]);
+  ctx.beginPath();
+  let primero=true, ult=null;
+  for(let t=0;t<=4;t+=0.01){
+    const r=ro+t, den=r*sp+cp;
+    if(den<=0.02) break;                       // el punto se va al infinito
+    const y=g.yDe(r), x=xo+g.f*t*tg/den, p=aPan(x,y);
+    if(p.y<-80) break;
+    if(primero){ ctx.moveTo(p.x,p.y); primero=false; } else ctx.lineTo(p.x,p.y);
+    ult=p;
+  }
+  ctx.stroke(); ctx.setLineDash([]);
+  if(lab&&ult){ ctx.fillStyle=col; ctx.fillText(lab, ult.x+5, ult.y+12); }
+}
+/* Alturas de referencia sobre el punto de disparo. */
+function dibujaHorizontales(){
+  const g=geom(); if(!g||S.marks.origen===null) return;
+  const d=+S.med.d; if(!d) return;
+  const ro=g.r(S.marks.origen.y);
+  ctx.font="600 11px ui-monospace,monospace";
+  for(const H of lista(S.med.alturas)){
+    const py=aPan(0,g.yDe(ro+H/d)).y;
+    if(py<-30||py>H_()+30) continue;
+    ctx.strokeStyle="#39c5cf"; ctx.lineWidth=1.4; ctx.setLineDash([10,4]);
+    ctx.beginPath(); ctx.moveTo(0,py); ctx.lineTo(W,py); ctx.stroke(); ctx.setLineDash([]);
+    const lab=fmt(H,0)+" m";
+    const w=ctx.measureText(lab).width;
+    ctx.fillStyle="rgba(0,0,0,.6)"; ctx.fillRect(W-w-14,py-16,w+10,14);
+    ctx.fillStyle="#39c5cf"; ctx.fillText(lab, W-w-9, py-5);
+  }
+}
+const H_=()=>H;
 function dibujaReticula(){
   const g=geom(); if(!g||S.marks.origen===null) return;
   const d=+S.med.d, hn=+S.med.hNom, tol=+S.med.tol;
@@ -957,10 +1026,26 @@ function uiMedida(m){
   h += navHTML();
 
   /* --- retícula --- */
-  h += `<h3>Retícula de tolerancia</h3>
+  h += `<h3>Referencias sobre la imagen</h3>
   <div class="row"><label>Altura declarada</label><input type="number" step="0.1" id="iHnom" value="${S.med.hNom??""}"><span class="u">m</span></div>
   <div class="row"><label>Tolerancia admitida</label><input type="number" step="1" id="iTol" value="${S.med.tol}"><span class="u">%</span></div>
-  <div class="btns"><button class="${S.reticula?"g":""}" id="bRet">${S.reticula?"Retícula activa":"Mostrar retícula"}</button></div>`;
+  <div class="btns"><button class="${S.reticula?"g":""}" id="bRet">${S.reticula?"Tolerancia ✓":"Tolerancia"}</button></div>
+
+  <div class="row"><label>Alturas de referencia</label><input type="text" id="iAlt" value="${S.med.alturas}"><span class="u">m</span></div>
+  <div class="btns"><button class="${S.med.horiz?"g":""}" id="bHor">${S.med.horiz?"Alturas ✓":"Alturas"}</button></div>
+
+  <div class="row"><label>Desviación vertical</label><input type="text" id="iAng" value="${S.med.angulos}"><span class="u">°</span></div>
+  <div class="btns"><button class="${S.med.obliq?"g":""}" id="bObl">${S.med.obliq?"Oblicuas ✓":"Oblicuas"}</button></div>
+  <div class="note">Las oblicuas salen del punto de disparo y acotan la desviación respecto a la vertical, pensadas
+  para voladores. Son rectas, como corresponde a la proyección de una recta del espacio, pero su separación lateral
+  depende del cabeceo: un punto alto queda a distinta distancia del plano imagen que el punto de disparo, y eso
+  reescala la separación. Por eso <b>se recalculan al cambiar el cabeceo</b> en vez de trazarse con una pendiente fija.
+  <br><br><b>Limitación que conviene tener presente.</b> La imagen solo da la <b>proyección</b> del ángulo: si el
+  volador se desvía hacia la cámara o alejándose de ella, el ángulo aparente es menor que el real. Un artículo que
+  salga fuera de las líneas incumple con seguridad; uno que quede dentro no queda acreditado como conforme. Para
+  afirmar lo segundo hacen falta dos estaciones a 90°, como pide la EN 16261-3, 6.10.3.
+  <br><br>Los valores por defecto, 15° y 20/30 m, corresponden a los límites que manejamos para voladores de F2 y
+  F3. <b>Confírmalos contra la edición aplicable</b> antes de usarlos en un informe: son preajustes, no una cita.</div>`;
 
   /* --- bloque técnico --- */
   if (T && R){
@@ -1208,6 +1293,10 @@ function enlaza(){
     S.sel = S.marks.puntos.length-1; pinta();
   });
   on("bRet","click",()=>{ S.reticula=!S.reticula; pinta(); });
+  on("bHor","click",()=>{ S.med.horiz=!S.med.horiz; guarda(); pinta(); });
+  on("bObl","click",()=>{ S.med.obliq=!S.med.obliq; guarda(); pinta(); });
+  on("iAlt","change",e=>{ S.med.alturas=e.target.value; guarda(); pinta(); });
+  on("iAng","change",e=>{ S.med.angulos=e.target.value; guarda(); pinta(); });
   on("iCam","change",async e=>{
     S.camId=e.target.value; localStorage.setItem("vpd.camId",S.camId);
     cancelAnimationFrame(vidRAF);
