@@ -106,7 +106,9 @@ a{color:var(--acc)}
 <div id="panel"></div>
 
 <input type="file" id="fImg" accept="image/*">
+<input type="file" id="fDoc">
 <input type="file" id="fVid" accept="video/*">
+<input type="file" id="fVidDoc">
 <video id="vid" playsinline muted style="display:none"></video>
 <datalist id="dlEtiq">
   <option>Altura de funcionamiento</option>
@@ -143,12 +145,12 @@ const S = {
     d:100, ud:1.0, hRef:0, tol:20, upx:3, uphi:0.3, fuente:"sensor"
   },
   src:null,
-  marks:{ origen:null, puntos:[{lab:"Altura de funcionamiento", y:null}] },
+  marks:{ origen:null, puntos:[{lab:"Altura de funcionamiento", x:null, y:null}] },
   sel:-1,                 // -1 = origen ; 0..n-1 = índice de punto
   paso:"fino",            // fino | normal
   view:{s:1, tx:0, ty:0, fit:1},
-  tilt:{val:null, n:0, src:"—", err:""},
-  tiltFijo:null,
+  tilt:{val:null, roll:null, n:0, src:"—", err:""},
+  tiltFijo:null, rollFijo:null,
   calib:{ puntos:[], d:100, hCam:0, sensor:0, out:null, tipo:"phi" },
   reticula:false,
   liveErr:""
@@ -163,7 +165,18 @@ const PASO = () => S.paso==="fino" ? 0.25 : 4;   // en píxeles de imagen
 
 /* ------------------------------------------------------------- sensores */
 let sensorOn = false;
-function fijaTilt(elevDeg, src){ S.tilt.val=elevDeg; S.tilt.n++; S.tilt.src=src; pintaBadges(); }
+/* Descomposición limpia del vector gravedad en el marco del dispositivo:
+   - elevación (cabeceo, adelante/atrás) = asin(−gz/|g|), invariante al balanceo
+     porque el balanceo gira alrededor del eje óptico y no toca gz.
+   - balanceo lateral ρ = atan2(gx, gy), cero con el móvil vertical en retrato.
+   Es el ángulo que gira la imagen y por tanto el que rompe la verticalidad
+   del eje y de la foto. */
+function fijaGrav(gx,gy,gz,src){
+  const m = Math.hypot(gx,gy,gz) || 1;
+  S.tilt.val  = Math.asin(-gz/m)*180/Math.PI;
+  S.tilt.roll = Math.atan2(gx,gy)*180/Math.PI;
+  S.tilt.n++; S.tilt.src=src; pintaBadges();
+}
 async function activaSensores(){
   if (sensorOn) return;
   S.tilt.err="";
@@ -179,10 +192,7 @@ async function activaSensores(){
   try{
     if ("GravitySensor" in window){
       const g = new GravitySensor({frequency:20});
-      g.addEventListener("reading", ()=>{
-        const m = Math.hypot(g.x,g.y,g.z) || 1;
-        fijaTilt(Math.asin(-g.z/m)*180/Math.PI, "GravitySensor");
-      });
+      g.addEventListener("reading", ()=>fijaGrav(g.x,g.y,g.z,"GravitySensor"));
       g.addEventListener("error", ev=>{ S.tilt.err = ev.error?.message || "error GravitySensor"; });
       g.start(); sensorOn=true;
     }
@@ -190,15 +200,15 @@ async function activaSensores(){
   if (!sensorOn){
     window.addEventListener("devicemotion", ev=>{
       const a = ev.accelerationIncludingGravity; if(!a||a.x===null) return;
-      const m = Math.hypot(a.x,a.y,a.z)||1;
-      fijaTilt(Math.asin(-a.z/m)*180/Math.PI, "devicemotion");
+      fijaGrav(a.x,a.y,a.z,"devicemotion");
     });
     sensorOn=true;
   }
   window.addEventListener("deviceorientation", ev=>{
     if (S.tilt.src==="GravitySensor"||S.tilt.src==="devicemotion") return;
     if (ev.beta===null) return;
-    fijaTilt(ev.beta-90, "deviceorientation");
+    S.tilt.val = ev.beta-90; S.tilt.roll = ev.gamma ?? null;
+    S.tilt.n++; S.tilt.src="deviceorientation"; pintaBadges();
   });
   pinta();
 }
@@ -207,6 +217,22 @@ function tiltUsado(){
   if (S.tiltFijo!==null) return S.tiltFijo + perfil().delta;
   if (S.tilt.val===null) return null;
   return S.tilt.val + perfil().delta;
+}
+function rollUsado(){
+  if (S.med.fuente==="manual") return (S.med.rollManual===""||S.med.rollManual===undefined)?null:+S.med.rollManual;
+  if (S.rollFijo!==null) return S.rollFijo;
+  return S.tilt.roll;
+}
+/* Umbrales de balanceo lateral. Recomendación propia, no requisito normativo:
+   mantienen la contribución del balanceo por debajo del 1 % de la altura en
+   los encuadres realistas. Ver nota en la interfaz. */
+const ROLL_OK = 1.0, ROLL_AVISO = 3.0;
+function semaforoRoll(r){
+  if (r===null) return {cls:"v-na", txt:"sin lectura"};
+  const a=Math.abs(r);
+  if (a<=ROLL_OK)    return {cls:"v-ok", txt:"dentro de ±"+fmt(ROLL_OK,1)+"°"};
+  if (a<=ROLL_AVISO) return {cls:"v-na", txt:"entre ±"+fmt(ROLL_OK,1)+"° y ±"+fmt(ROLL_AVISO,1)+"°: aceptable si origen y punto quedan en la misma vertical"};
+  return {cls:"v-no", txt:"por encima de ±"+fmt(ROLL_AVISO,1)+"°: corrige el balanceo"};
 }
 
 /* ----------------------------------------------------------- geometría */
@@ -221,8 +247,9 @@ function geom(){
 }
 function medidas(){
   const g = geom(); if (!g || S.marks.origen===null) return null;
-  const p = perfil(), d = +S.med.d, yo = S.marks.origen;
+  const p = perfil(), d = +S.med.d, yo = S.marks.origen.y, xo = S.marks.origen.x;
   const phi0 = tiltUsado() ?? 0;
+  const roll = rollUsado();
   const con = (fv,y0v,phiv,dv,yov,ytv)=>{
     const rr = y => Math.tan(Math.atan((y0v-y)/fv) + phiv*Math.PI/180);
     return (rr(ytv)-rr(yov))*dv;
@@ -238,9 +265,16 @@ function medidas(){
     const upx   = +S.med.upx;
     const cPo   = Math.abs(con(g.f,g.y0,phi0,d,yo+upx,q.y)-base);
     const cPt   = Math.abs(con(g.f,g.y0,phi0,d,yo,q.y+upx)-base);
-    const uc = Math.hypot(cDist,cF,cPhi,cPo,cPt), U = 2*uc;
-    return {lab:q.lab, y:q.y, ro, rt, dr, dH, H:dH+(+S.med.hRef||0), uc, U,
-            comp:{cDist,cF,cPhi,cPo,cPt},
+    /* Balanceo lateral: si la imagen está girada ρ, un punto separado Δx
+       horizontalmente del origen aparenta un desplazamiento vertical
+       Δx·sen ρ. El error en Δr es (Δx/f)·sen ρ y se anula exactamente
+       cuando origen y punto están en la misma vertical de la imagen. */
+    const dx = (q.x===null||xo===null) ? null : (q.x-xo);
+    const cRoll = (dx===null||roll===null) ? 0
+                : Math.abs(dx/g.f*Math.sin(roll*Math.PI/180))*d;
+    const uc = Math.hypot(cDist,cF,cPhi,cPo,cPt,cRoll), U = 2*uc;
+    return {lab:q.lab, y:q.y, x:q.x, dx, ro, rt, dr, dH, H:dH+(+S.med.hRef||0), uc, U,
+            comp:{cDist,cF,cPhi,cPo,cPt,cRoll},
             relU: Math.abs(dH)>1e-9 ? 100*U/Math.abs(dH) : null};
   });
 }
@@ -287,9 +321,9 @@ function dibuja(){
     try{ ctx.drawImage(S.src.el, 0,0,S.src.w,S.src.h, v.tx,v.ty,S.src.w*v.s,S.src.h*v.s); }catch(e){}
   }
   if (S.src && S.modo!=="calib"){
-    if (S.marks.origen!==null) linea(S.marks.origen, "#ff7b40", "ORIGEN", S.sel===-1);
+    if (S.marks.origen!==null) linea(S.marks.origen.y, "#ff7b40", "ORIGEN", S.sel===-1, S.marks.origen.x);
     S.marks.puntos.forEach((q,i)=>{
-      if (q.y!==null) linea(q.y, COL[i%COL.length], (i+1)+" · "+(q.lab||"punto"), S.sel===i);
+      if (q.y!==null) linea(q.y, COL[i%COL.length], (i+1)+" · "+(q.lab||"punto"), S.sel===i, q.x);
     });
   }
   if (S.modo==="calib" && S.src){
@@ -298,12 +332,16 @@ function dibuja(){
   if (S.reticula) dibujaReticula();
   cruz();
 }
-function linea(iy,col,lab,activa){
+function linea(iy,col,lab,activa,ix){
   const py = aPan(0,iy).y;
   if (py<-24||py>H+24) return;
   ctx.strokeStyle=col; ctx.lineWidth=activa?2.2:1.4;
   ctx.setLineDash(activa?[]:[7,5]);
   ctx.beginPath(); ctx.moveTo(0,py); ctx.lineTo(W,py); ctx.stroke(); ctx.setLineDash([]);
+  if (ix!==null && ix!==undefined){           // marca de posición lateral
+    const px = aPan(ix,0).x;
+    ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(px,py-7); ctx.lineTo(px,py+7); ctx.stroke();
+  }
   ctx.font="600 11px ui-monospace,monospace";
   const w = ctx.measureText(lab).width;
   ctx.fillStyle="rgba(0,0,0,.6)"; ctx.fillRect(4,py-16,w+8,14);
@@ -313,7 +351,7 @@ function dibujaReticula(){
   const g=geom(); if(!g||S.marks.origen===null) return;
   const d=+S.med.d, hn=+S.med.hNom, tol=+S.med.tol;
   if (!hn||!d) return;
-  const ro = g.r(S.marks.origen);
+  const ro = g.r(S.marks.origen.y);
   const sets=[[hn,"#8b949e","nominal"],[hn*(1+tol/100),"#f85149","+"+fmt(tol,0)+"%"],
               [hn*(1-tol/100),"#f85149","−"+fmt(tol,0)+"%"]];
   ctx.font="600 11px ui-monospace,monospace";
@@ -346,9 +384,11 @@ function cruz(){
 function pintaBadges(){
   const t=tiltUsado();
   const fij = S.tiltFijo!==null ? " ⏸" : "";
-  const tb=$("#tiltbadge"), zb=$("#zoombadge");
-  tb.textContent = t===null ? "φ —" : ("φ "+(t>=0?"+":"")+fmt(t,2)+"°"+fij);
-  tb.style.color = t===null ? "var(--dim)" : (Math.abs(t)<0.3?"var(--ok)":"var(--txt)");
+  const tb=$("#tiltbadge"), zb=$("#zoombadge"), rl=rollUsado();
+  tb.innerHTML = (t===null ? "φ —" : "φ "+(t>=0?"+":"")+fmt(t,2)+"°"+fij)
+    + "<br><span style=\"color:"
+    + (rl===null?"var(--dim)":(Math.abs(rl)<=ROLL_OK?"var(--ok)":(Math.abs(rl)<=ROLL_AVISO?"var(--warn)":"var(--bad)")))
+    + "\">ρ " + (rl===null?"—":(rl>=0?"+":"")+fmt(rl,2)+"°") + "</span>";
   if (S.src){
     const c=centroImg();
     zb.textContent = fmt(S.view.s/S.view.fit,1)+"×  y="+fmt(c.y,1);
@@ -428,7 +468,7 @@ function repite(el, fn){
 /* ------------------------------------------------------ carga de medios */
 function limpiaMarcas(){
   S.marks.origen=null;
-  S.marks.puntos.forEach(q=>q.y=null);
+  S.marks.puntos.forEach(q=>{q.y=null; q.x=null;});
   S.sel=-1;
 }
 async function cargaImagen(file){
@@ -571,9 +611,14 @@ function uiMedida(m){
   const R = medidas(), g = geom();
   let h = "";
 
-  if (m==="foto") h += `<div class="btns"><button class="p" id="bLoadImg">Cargar imagen</button></div>`;
+  if (m==="foto") h += `<div class="btns">
+    <button class="p" id="bLoadImg">Galería / cámara</button>
+    <button id="bLoadDoc">Archivo</button></div>
+    <div class="note">«Archivo» abre el selector de documentos, para imágenes en Descargas, Drive, Dropbox o cualquier carpeta del dispositivo.</div>`;
   if (m==="video"){
-    h += `<div class="btns"><button class="p" id="bLoadVid">Cargar vídeo</button></div>`;
+    h += `<div class="btns">
+      <button class="p" id="bLoadVid">Galería</button>
+      <button id="bLoadVidDoc">Archivo</button></div>`;
     if (S.src&&S.src.kind==="vid") h += `
     <div class="btns">
       <button id="vBack10">⏪ 10</button><button id="vBack">◀</button>
@@ -592,24 +637,42 @@ function uiMedida(m){
 
   if (!S.src) return h + `<div class="note">Perfil de calibración activo: <b>${perfil().name}</b>.</div>`;
 
+  /* --- encuadre: los dos ángulos del móvil --- */
+  const rl = rollUsado(), sem = semaforoRoll(rl), tt = tiltUsado();
+  h += `<h3>Encuadre</h3>
+  <div class="res">
+    <div class="big"><s>Balanceo lateral ρ</s><b style="color:${sem.cls==="v-ok"?"var(--ok)":(sem.cls==="v-no"?"var(--bad)":"var(--warn)")}">${rl===null?"—":(rl>=0?"+":"")+fmt(rl,2)+"°"}</b></div>
+    <div class="big"><s>Cabeceo φ (con δ)</s><b>${tt===null?"—":(tt>=0?"+":"")+fmt(tt,2)+"°"}</b></div>
+    <div class="verdict ${sem.cls}">${sem.txt}</div>
+  </div>
+  <div class="note"><b>El cabeceo no tiene límite</b>: el modelo lo usa como dato, así que inclinar adelante o atrás
+  no introduce error por sí mismo. Lo que importa es que origen y punto queden a un lado y otro del centro de la imagen,
+  y eso se vigila con la suma r<sub>origen</sub> + r<sub>punto</sub> del presupuesto, no con el ángulo.
+  <b>El balanceo sí es un error directo</b>, porque gira el eje y de la imagen respecto a la vertical real.</div>
+  ${S.med.fuente==="sensor" ? `<div class="btns">
+    ${S.rollFijo!==null?'<button id="bUnfreezeR">Liberar balanceo</button>':'<button id="bFreezeR">Congelar balanceo</button>'}
+  </div>`:""}`;
+
   /* --- marcas --- */
   h += `<h3>Marcas</h3>
   <table>
-    <tr><th>Marca</th><th>y (px)</th><th>r (%)</th><th></th></tr>
+    <tr><th>Marca</th><th>y (px)</th><th>Δx (px)</th><th>r (%)</th><th></th></tr>
     <tr class="${S.sel===-1?"sel":""}">
       <td><span class="dot" style="background:#ff7b40"></span><b>Origen</b></td>
-      <td>${S.marks.origen===null?"—":fmt(S.marks.origen,1)}</td>
+      <td>${S.marks.origen===null?"—":fmt(S.marks.origen.y,1)}</td>
+      <td>0</td>
       <td>—</td>
       <td><button class="mini mSel" data-i="-1">sel.</button></td>
     </tr>
     ${S.marks.puntos.map((q,i)=>{
-      const rr = R && R[i] && R[i].y!==null ? fmt(100*R[i].dr,2) : "—";
+      const x = R && R[i] && R[i].y!==null ? R[i] : null;
       return `<tr class="${S.sel===i?"sel":""}">
         <td><span class="dot" style="background:${COL[i%COL.length]}"></span>
             <input type="text" class="mLab" data-i="${i}" list="dlEtiq" value="${(q.lab||"").replace(/"/g,"&quot;")}"
                    placeholder="etiqueta" style="font:13px inherit"></td>
         <td>${q.y===null?"—":fmt(q.y,1)}</td>
-        <td>${rr}</td>
+        <td>${x&&x.dx!==null?fmt(x.dx,0):"—"}</td>
+        <td>${x?fmt(100*x.dr,2):"—"}</td>
         <td><button class="mini mSel" data-i="${i}">sel.</button>
             ${S.marks.puntos.length>1?`<button class="mini mDel" data-i="${i}">×</button>`:""}</td>
       </tr>`;
@@ -634,7 +697,8 @@ function uiMedida(m){
       <option value="manual"${S.med.fuente==="manual"?" selected":""}>Manual</option>
     </select></div>`;
   if (S.med.fuente==="manual")
-    h += `<div class="row"><label>φ</label><input type="number" step="0.01" id="iPhi" value="${S.med.phiManual??0}"><span class="u">°</span></div>`;
+    h += `<div class="row"><label>φ cabeceo</label><input type="number" step="0.01" id="iPhi" value="${S.med.phiManual??0}"><span class="u">°</span></div>
+          <div class="row"><label>ρ balanceo</label><input type="number" step="0.01" id="iRoll" value="${S.med.rollManual??""}"><span class="u">°</span></div>`;
   else {
     h += `<div class="btns">
       ${sensorOn?"":'<button class="p" id="bSens">Activar sensores</button>'}
@@ -673,15 +737,20 @@ function uiMedida(m){
       <table>
         <tr><th>Contribución</th><th>u (m)</th><th>%&nbsp;de&nbsp;u<sub>c</sub></th></tr>
         ${[["Distancia de observación",sx.comp.cDist],["Focal (calibración)",sx.comp.cF],
-           ["Inclinación",sx.comp.cPhi],["Marcado del origen",sx.comp.cPo],
-           ["Marcado del punto",sx.comp.cPt]]
+           ["Cabeceo φ",sx.comp.cPhi],["Balanceo lateral ρ",sx.comp.cRoll],
+           ["Marcado del origen",sx.comp.cPo],["Marcado del punto",sx.comp.cPt]]
           .map(([k,v])=>`<tr><td>${k}</td><td>${fmt(v,3)}</td><td>${fmt(100*v*v/(sx.uc*sx.uc),0)}</td></tr>`).join("")}
         <tr><td><b>u<sub>c</sub></b></td><td><b>${fmt(sx.uc,3)}</b></td><td>100</td></tr>
         <tr><td><b>U (k=2)</b></td><td><b>${fmt(sx.U,3)}</b></td><td>${fmt(sx.relU,2)} %</td></tr>
       </table>
       <div class="note">r<sub>origen</sub> = ${fmt(100*sx.ro,2)} % · r<sub>punto</sub> = ${fmt(100*sx.rt,2)} % ·
       suma ${fmt(100*(sx.ro+sx.rt),2)} %. Cuanto más cerca de cero esa suma, menos pesan los errores de
-      inclinación y de focal: conviene que origen y punto queden a un lado y otro del centro de la imagen.</div>`;
+      cabeceo y de focal: conviene que origen y punto queden a un lado y otro del centro de la imagen.</div>
+      <div class="note">Balanceo: separación horizontal entre origen y punto
+      ${sx.dx===null?"no registrada":fmt(sx.dx,0)+" px"}${rl===null?"":", con ρ = "+fmt(rl,2)+"°"}.
+      El error vale (Δx/f)·sen ρ y <b>se anula cuando origen y punto están en la misma vertical de la imagen</b>,
+      igual que el error de cabeceo se anula cuando están a un lado y otro del centro. Si el efecto deriva
+      lateralmente, el balanceo empieza a pesar; si sube a plomo sobre el punto de disparo, no pesa nada.</div>`;
     }
   }
 
@@ -706,8 +775,13 @@ function uiCalib(){
   <div class="note">${esPhi
     ? "Ajusta <b>una sola incógnita</b>, la inclinación óptica de la toma, tomando f e y₀ del perfil activo. Al restarle la lectura del sensor sale la desalineación δ. Es el único ajuste fiable para δ: repítelo en dos o tres fotos con inclinaciones distintas y comprueba que concuerdan dentro de una décima de grado."
     : "Ajusta focal, centro óptico e inclinación a la vez. <b>Con las marcas en una sola vertical y una sola distancia los tres parámetros están correlacionados</b>: el residuo puede salir bajo y los valores individuales ser poco fiables. Úsalo para obtener f e y₀ promediando varias tomas, y <b>no lo uses para la desalineación</b>."}</div>
-  <div class="btns"><button class="p" id="bLoadImg">Cargar imagen</button></div>`;
+  <div class="btns"><button class="p" id="bLoadImg">Galería / cámara</button>
+    <button id="bLoadDoc">Archivo</button></div>`;
   if (!S.src) return h;
+  const rlc = rollUsado();
+  if (rlc!==null && Math.abs(rlc)>ROLL_OK)
+    h += `<div class="err">Balanceo lateral ρ = ${fmt(rlc,2)}° en la lectura actual.
+    La foto de calibración debe tomarse con ρ ≈ 0: un balanceo apreciable sesga y₀ y φ.</div>`;
 
   h += `<h3>Geometría del ensayo</h3>
   <div class="row"><label>Distancia horiz.</label><input type="number" step="0.1" id="cD" value="${S.calib.d}"><span class="u">cm</span></div>
@@ -798,7 +872,11 @@ function enlaza(){
   const num=(id,key,obj)=>on(id,"change",e=>{ obj[key]=e.target.value===""?"":+e.target.value; guarda(); pinta(); });
 
   on("bLoadImg","click",()=>$("#fImg").click());
+  on("bLoadDoc","click",()=>$("#fDoc").click());
   on("bLoadVid","click",()=>$("#fVid").click());
+  on("bLoadVidDoc","click",()=>$("#fVidDoc").click());
+  on("bFreezeR","click",()=>{ if(S.tilt.roll!==null){S.rollFijo=S.tilt.roll; pinta();} });
+  on("bUnfreezeR","click",()=>{ S.rollFijo=null; pinta(); });
   on("bLive","click",abreDirecto);
   on("bFreeze","click",congela);
   on("bFit","click",()=>{encaja();dibuja();pintaBadges();});
@@ -818,16 +896,16 @@ function enlaza(){
   }));
   on("bFix","click",()=>{
     if (!dentro()) return;
-    const y = centroImg().y;
+    const c = centroImg();
     if (S.sel===-1){
-      S.marks.origen = y;
+      S.marks.origen = {x:c.x, y:c.y};
       const sig = S.marks.puntos.findIndex(q=>q.y===null);
       S.sel = sig>=0 ? sig : 0;
-    } else S.marks.puntos[S.sel].y = y;
+    } else { S.marks.puntos[S.sel].y = c.y; S.marks.puntos[S.sel].x = c.x; }
     pinta();
   });
   on("bAdd","click",()=>{
-    S.marks.puntos.push({lab:"", y:null});
+    S.marks.puntos.push({lab:"", x:null, y:null});
     S.sel = S.marks.puntos.length-1; pinta();
   });
   on("bRet","click",()=>{ S.reticula=!S.reticula; pinta(); });
@@ -842,7 +920,8 @@ function enlaza(){
   repite($("#zIn"),()=>zoom(1.25)); repite($("#zOut"),()=>zoom(1/1.25));
 
   num("iD","d",S.med); num("iUd","ud",S.med); num("iHref","hRef",S.med);
-  num("iHnom","hNom",S.med); num("iTol","tol",S.med); num("iPhi","phiManual",S.med);
+  num("iHnom","hNom",S.med); num("iTol","tol",S.med);
+  num("iPhi","phiManual",S.med); num("iRoll","rollManual",S.med);
   on("iFuente","change",e=>{S.med.fuente=e.target.value;guarda();pinta();});
 
   // vídeo
@@ -898,8 +977,18 @@ $$(".tab").forEach(b=>b.addEventListener("click",()=>{
     S.calib.puntos=[{h:null,y:null},{h:null,y:null},{h:null,y:null},{h:null,y:null},{h:null,y:null}];
   pinta();
 }));
-$("#fImg").addEventListener("change",e=>{ if(e.target.files[0]) cargaImagen(e.target.files[0]); e.target.value=""; });
-$("#fVid").addEventListener("change",e=>{ if(e.target.files[0]) cargaVideo(e.target.files[0]); e.target.value=""; });
+["fImg","fDoc"].forEach(id=>$("#"+id).addEventListener("change",e=>{
+  const f=e.target.files[0]; e.target.value="";
+  if (!f) return;
+  if (f.type && !f.type.startsWith("image/")){ alert("Ese archivo no es una imagen ("+f.type+")."); return; }
+  cargaImagen(f);
+}));
+["fVid","fVidDoc"].forEach(id=>$("#"+id).addEventListener("change",e=>{
+  const f=e.target.files[0]; e.target.value="";
+  if (!f) return;
+  if (f.type && !f.type.startsWith("video/")){ alert("Ese archivo no es un vídeo ("+f.type+")."); return; }
+  cargaVideo(f);
+}));
 
 /* El lienzo se redimensiona cuando cambia el elemento, no cuando cambia la
    ventana: al maximizar, el panel reflueye y el rect no es fiable todavía. */
