@@ -737,30 +737,30 @@ function uiMedida(m){
   /* --- toma: distancia y ángulos --- */
   const rl = rollUsado(), sem = semaforoRoll(rl), tt = tiltUsado();
   h += `<h3>Toma</h3>
-  <div class="row"><label>Distancia</label><input type="number" step="0.01" id="iD" value="${S.med.d}"><span class="u">m</span></div>`;
+  <div class="row"><label>Distancia de observación</label><input type="number" step="0.01" id="iD" value="${S.med.d}"><span class="u">m</span></div>`;
 
   if (esVivo()){
     const colR = sem.cls==="v-ok"?"var(--ok)":(sem.cls==="v-no"?"var(--bad)":"var(--warn)");
-    h += `<div class="row"><label>Cabeceo φ</label>
+    h += `<div class="row"><label>Cabeceo (arriba/abajo)</label>
       <div style="flex:1;font:700 17px ui-monospace,monospace">${tt===null?"—":(tt>=0?"+":"")+fmt(tt,2)+"°"}</div></div>
-    <div class="row"><label>Balanceo ρ</label>
+    <div class="row"><label>Balanceo (lateral)</label>
       <div style="flex:1;font:700 17px ui-monospace,monospace;color:${colR}">${rl===null?"—":(rl>=0?"+":"")+fmt(rl,2)+"°"}</div></div>
     ${sensorOn?"":'<div class="btns"><button class="p" id="bSens">Activar sensores</button></div>'}
     <div class="note">Al congelar, estos ángulos pasan a ser datos de la toma.</div>`;
   } else {
-    h += `<div class="row"><label>Cabeceo φ</label><input type="number" step="0.01" id="iPhi"
+    h += `<div class="row"><label>Cabeceo (arriba/abajo)</label><input type="number" step="0.01" id="iPhi"
       value="${S.med.phiManual??""}" placeholder="lectura del sensor al disparar"><span class="u">°</span></div>
-    <div class="row"><label>Balanceo ρ</label><input type="number" step="0.01" id="iRoll"
+    <div class="row"><label>Balanceo (lateral)</label><input type="number" step="0.01" id="iRoll"
       value="${S.med.rollManual??""}" placeholder="opcional"><span class="u">°</span></div>`;
     if (phiSupuesto()) h += `<div class="verdict v-na">Sin cabeceo: se supone cámara a plomo</div>`;
     else if (rl!==null && sem.cls!=="v-ok") h += `<div class="verdict ${sem.cls}">Balanceo ${fmt(Math.abs(rl),1)}°: revisa la columna Δx</div>`;
   }
 
   if (T){
-    h += `<div class="row"><label>u(distancia)</label><input type="number" step="0.1" id="iUd" value="${S.med.ud}"><span class="u">%</span></div>
-    <div class="row"><label>Cota del origen</label><input type="number" step="0.01" id="iHref" value="${S.med.hRef}"><span class="u">m</span></div>
-    <div class="note"><b>Cota del origen</b>: altura del punto de disparo sobre el plano al que quieras referir
-    los resultados. Déjala en cero y las alturas salen medidas desde el propio punto de disparo, que es como
+    h += `<div class="row"><label>Error de la distancia</label><input type="number" step="0.1" id="iUd" value="${S.med.ud}"><span class="u">%</span></div>
+    <div class="row"><label>Altura del disparo</label><input type="number" step="0.01" id="iHref" value="${S.med.hRef}"><span class="u">m</span></div>
+    <div class="note"><b>Altura del disparo</b>: a qué altura está la boca del mortero sobre el suelo, o sobre el plano
+    al que quieras referir los resultados. Déjala en cero y las alturas salen medidas desde el propio punto de disparo, que es como
     las define la norma. Solo se usa cuando el informe tiene que darlas sobre otra referencia.
     <br><br>Los ángulos son datos <b>de la toma</b>: el sensor de ahora no sabe nada de cómo estaba la cámara
     cuando se capturó la imagen. En el cabeceo se teclea la lectura cruda y la aplicación añade
@@ -775,7 +775,7 @@ function uiMedida(m){
   /* --- marcas y resultados en una sola tabla --- */
   h += `<h3>Marcas y alturas</h3>
   <table>
-    <tr><th>Marca</th>${T?"<th>y</th><th>Δx</th>":""}<th>Altura</th><th>% de d</th><th>±U</th><th></th></tr>
+    <tr><th>Marca</th>${T?"<th>Fila y</th><th>Lateral Δx</th>":""}<th>Altura</th><th>% dist.</th><th>± incert.</th><th></th></tr>
     <tr class="${S.sel===-1?"sel":""}">
       <td><span class="dot" style="background:#ff7b40"></span><b>Origen</b></td>
       ${T?`<td>${S.marks.origen===null?"—":fmt(S.marks.origen.y,1)}</td><td>0</td>`:""}
@@ -822,8 +822,8 @@ function uiMedida(m){
 
   /* --- retícula --- */
   h += `<h3>Retícula de tolerancia</h3>
-  <div class="row"><label>Altura nominal</label><input type="number" step="0.1" id="iHnom" value="${S.med.hNom??""}"><span class="u">m</span></div>
-  <div class="row"><label>Tolerancia</label><input type="number" step="1" id="iTol" value="${S.med.tol}"><span class="u">%</span></div>
+  <div class="row"><label>Altura declarada</label><input type="number" step="0.1" id="iHnom" value="${S.med.hNom??""}"><span class="u">m</span></div>
+  <div class="row"><label>Tolerancia admitida</label><input type="number" step="1" id="iTol" value="${S.med.tol}"><span class="u">%</span></div>
   <div class="btns"><button class="${S.reticula?"g":""}" id="bRet">${S.reticula?"Retícula activa":"Mostrar retícula"}</button></div>`;
 
   /* --- bloque técnico --- */
@@ -854,16 +854,39 @@ function uiMedida(m){
       <div class="kv"><span>fotograma</span><b>${S.src.w}×${S.src.h} px</b></div>
       <div class="kv"><span>focal f</span><b>${fmt(g.f,1)} px (${fmt(perfil().fRel,5)})</b></div>
       <div class="kv"><span>centro óptico y₀</span><b>${fmt(g.y0,1)} px (${fmt(perfil().y0Rel,5)})</b></div>
-      <div class="kv"><span>desalineación δ</span><b>${(perfil().delta>=0?"+":"")+fmt(perfil().delta,3)}°</b></div>
-      <div class="kv"><span>φ aplicado</span><b>${tt===null?"—":(tt>=0?"+":"")+fmt(tt,3)+"°"}</b></div>
-      <div class="kv"><span>u(marcado) · u(φ)</span><b>${fmt(S.med.upx,1)} px · ${fmt(S.med.uphi,2)}°</b></div>
-      <div class="kv"><span>factor de cobertura</span><b>k = 2</b></div>
+      <div class="kv"><span>desalineación del sensor δ</span><b>${(perfil().delta>=0?"+":"")+fmt(perfil().delta,3)}°</b></div>
+      <div class="kv"><span>cabeceo aplicado</span><b>${tt===null?"—":(tt>=0?"+":"")+fmt(tt,3)+"°"}</b></div>
+      <div class="kv"><span>error de marcado · de cabeceo</span><b>${fmt(S.med.upx,1)} px · ${fmt(S.med.uphi,2)}°</b></div>
+      <div class="kv"><span>factor de cobertura k</span><b>k = 2</b></div>
     </div>
     <div class="note">Modelo: r = tan(arctan((y₀−y)/f) + φ); altura = (r<sub>punto</sub> − r<sub>origen</sub>)·d.
     ${S.src.w>S.src.h?'<span style="color:var(--warn)">Fotograma en horizontal: el perfil se calibró en vertical.</span>':""}</div>`;
     if (esVivo()) h += diagHTML();
+    h += glosario();
   }
   return h + tecBoton();
+}
+
+function glosario(){
+  const t=[
+   ["Distancia de observación, d","Del trípode al plano vertical que pasa por el punto de disparo. Todo se mide en proporción a ella."],
+   ["Altura en % de la distancia, r","La altura dividida por la distancia. A 100 m de distancia, el 60 % son 60 m. Es el número que no depende de haber medido bien la distancia."],
+   ["Fila en la imagen, y","En qué fila de píxeles cae la marca, contando desde el borde superior de la foto. Es la coordenada que lee el modelo."],
+   ["Separación lateral, Δx","Cuántos píxeles separan el punto del origen en horizontal. Si vale cero, el balanceo no introduce ningún error."],
+   ["Cabeceo, φ","Cuánto apunta la cámara hacia arriba o hacia abajo. El modelo lo usa como dato, no como error."],
+   ["Balanceo, ρ","Cuánto está girada la cámara sobre su propio eje, el giro que tuerce el horizonte en la foto."],
+   ["Desalineación del sensor, δ","Diferencia fija entre lo que marca el sensor del móvil y hacia dónde mira realmente la lente. Es una constante de cada aparato."],
+   ["Focal, f","La distancia focal del objetivo expresada en píxeles de la imagen. Fija la escala angular de la foto."],
+   ["Centro óptico, y₀","La fila de la imagen que atraviesa el eje de la lente. Casi, pero no exactamente, el centro del fotograma."],
+   ["Incertidumbre típica, u","El margen de error que aporta una causa concreta, expresado a una desviación típica."],
+   ["Incertidumbre combinada, u_c","Todas las contribuciones sumadas en cuadratura, es decir por la raíz de la suma de cuadrados."],
+   ["Incertidumbre ampliada, U","El margen final que se declara. Con k = 2 abarca en torno al 95 % de los casos."],
+   ["Factor de cobertura, k","El multiplicador que convierte u_c en U. Aquí siempre 2."],
+   ["Altura del disparo","A qué altura está la boca del mortero sobre el plano al que se refieren los resultados. En cero, las alturas se dan desde el propio punto de disparo, que es como las define la norma."]
+  ];
+  return `<h3>Qué significa cada término</h3><table>
+    ${t.map(([k,v])=>`<tr><td style="width:38%"><b>${k}</b></td><td style="text-align:left;color:var(--dim)">${v}</td></tr>`).join("")}
+  </table>`;
 }
 
 function tecBoton(){
@@ -950,14 +973,14 @@ function uiAjustes(){
     <div class="kv"><span>f / altura de fotograma</span><b>${fmt(p.fRel,5)}</b></div>
     <div class="kv"><span>centro óptico relativo</span><b>${fmt(p.y0Rel,5)}</b></div>
     <div class="kv"><span>desalineación δ</span><b>${(p.delta>=0?"+":"")+fmt(p.delta,3)}°</b></div>
-    <div class="kv"><span>u(f) relativa</span><b>${fmt(p.uF,2)} %</b></div>
+    <div class="kv"><span>error de la focal</span><b>${fmt(p.uF,2)} %</b></div>
   </div>
   <div class="note">${p.note||""}</div>
   ${S.perfiles.length>1?'<div class="btns"><button id="aDel">Borrar este perfil</button></div>':""}
 
   <h3>Incertidumbres de entrada</h3>
-  <div class="row"><label>u(marcado)</label><input type="number" step="0.5" id="aUpx" value="${S.med.upx}"><span class="u">px</span></div>
-  <div class="row"><label>u(inclinación)</label><input type="number" step="0.05" id="aUphi" value="${S.med.uphi}"><span class="u">°</span></div>
+  <div class="row"><label>Error de marcado</label><input type="number" step="0.5" id="aUpx" value="${S.med.upx}"><span class="u">px</span></div>
+  <div class="row"><label>Error del cabeceo</label><input type="number" step="0.05" id="aUphi" value="${S.med.uphi}"><span class="u">°</span></div>
   <div class="note">u(marcado) es la repetibilidad al poner la cruz sobre el punto; 2 a 3 px es realista con zoom.
   u(inclinación) cubre el ruido del sensor más el residuo de la desalineación.</div>
 
