@@ -468,7 +468,9 @@ function pintaBadges(){
     + "\">ρ " + (rl===null?"—":(rl>=0?"+":"")+fmt(rl,2)+"°") + "</span>";
   if (S.src){
     const c=centroImg();
-    zb.textContent = fmt(S.view.s/S.view.fit,1)+"×  y="+fmt(c.y,1);
+    /* «vista» explícito: sin esa palabra se confundía con el zoom de cámara,
+       que sí cambia la focal y sí afectaría al resultado. El de vista no. */
+    zb.textContent = "vista "+fmt(S.view.s/S.view.fit,1)+"×";
     zb.style.color = dentro()? "var(--txt)" : "var(--warn)";
   } else zb.textContent="—";
 }
