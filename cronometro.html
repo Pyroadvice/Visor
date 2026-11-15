@@ -80,6 +80,16 @@ a{color:var(--acc)}
   <button id="crCero">Poner a cero</button>
 </div>
 <div id="crTabla"></div>
+
+<div class="btns"><button id="camGo">Cámara para cronómetro externo</button></div>
+<div id="camBox" class="hide">
+  <div style="background:#000;border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:9px 0">
+    <video id="camVid" playsinline muted style="width:100%;display:block;max-height:46vh;object-fit:contain"></video>
+  </div>
+  <div class="btns"><button class="o" id="camCap">Capturar punto</button>
+    <button id="camOff">Cerrar cámara</button></div>
+  <div id="camInfo"></div>
+</div>
 <div class="btns">
   <button class="p" id="bSync">Sincronizar con UTC</button>
   <button id="bTec">Detalle técnico</button>
@@ -114,7 +124,16 @@ if(!Array.isArray(D.puntos)||!D.puntos.length) D.puntos=NOM_DEF.map(n=>({nom:n,u
 const guarda=()=>localStorage.setItem("cron.d",JSON.stringify(D));
 
 const SYNC={off:null,u:null,fuente:null,rtt:null,n:0,log:[],err:"",fuentes:[]};
-const CR={t0:null, corriendo:false, laps:[], pend:0};
+const CR={t0:null, tStop:null, corriendo:false, laps:[], pend:0};
+const CAM={stream:null, on:false, via:null, err:""};
+const IMGS={};            // imágenes de captura, por índice de punto (solo en memoria)
+/* Incertidumbre de la marca temporal del fotograma, según qué dato ofrezca el
+   navegador. captureTime es el instante real de captura en la cámara; con él
+   el retardo de la tubería de vídeo queda resuelto. presentationTime es el de
+   presentación, posterior en una cantidad desconocida. Sin ninguno de los dos,
+   solo queda el instante de la llamada, y el retardo típico de una vista previa
+   en móvil, de 50 a 120 ms, pasa a ser incertidumbre pura. */
+const U_FRAME={captureTime:0.005, presentationTime:0.030, now:0.060};
 let tecnico=false;
 
 /* -------------------------------------------------------------- fuentes UTC */
@@ -214,14 +233,27 @@ function tic(){
    cero por construcción, porque el reloj UTC en pantalla está anclado al mismo
    reloj monótono que el cronómetro: solo una consulta nueva a la red aporta
    una referencia independiente de ese oscilador. */
-function crElapsed(){ return CR.t0===null?0:(performance.now()-CR.t0)/1000; }
+function crElapsed(){
+  if(CR.t0===null) return 0;
+  return ((CR.tStop!==null?CR.tStop:performance.now())-CR.t0)/1000;
+}
+/* Se trabaja en milisegundos enteros: dividir el valor en coma flotante perdía
+   un milisegundo en valores como 300,123 s, que salía 00:05:00,122. */
+function crFmt(sec){
+  const neg=sec<0; let r=Math.round(Math.abs(sec)*1000);
+  const h=Math.floor(r/3600000); r-=h*3600000;
+  const m=Math.floor(r/60000);   r-=m*60000;
+  const g=Math.floor(r/1000);    r-=g*1000;
+  const p=(x,n=2)=>String(x).padStart(n,"0");
+  return (neg?"−":"")+p(h)+":"+p(m)+":"+p(g)+","+p(r,3);
+}
 let crUltima=0;
 async function crMarca(etiqueta){
   const ahora=performance.now();
   if(ahora-crUltima<250) return;        // rebote: dos vueltas no caben en 250 ms
   crUltima=ahora;
   const tAbs=ahora, t=(tAbs-CR.t0)/1000;
-  const L={t, utc:null, u:null, fuente:null, et:etiqueta};
+  const L={t, utc:null, u:null, fuente:null, et:etiqueta, txt:crFmt(t)};
   CR.laps.push(L); CR.pend++; pinta();
   /* En cada vuelta solo se consulta el servidor más rápido: tres peticiones
      en vez de nueve. El barrido completo de todas las fuentes, que es el que
@@ -247,8 +279,53 @@ function crDesv(){
 }
 function crTic(){
   const n=$("#crNum");
-  if(n) n.textContent = crElapsed().toFixed(3).replace(".",",");
+  if(n){ n.textContent = crFmt(crElapsed());
+         n.style.color = CR.tStop!==null ? "var(--warn)" : "var(--ok)"; }
   requestAnimationFrame(crTic);
+}
+
+/* ------------------------------------------------------------------ cámara */
+async function camAbrir(){
+  CAM.err="";
+  try{
+    CAM.stream=await navigator.mediaDevices.getUserMedia({
+      video:{facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080}},audio:false});
+    const v=$("#camVid"); v.srcObject=CAM.stream; await v.play(); CAM.on=true;
+  }catch(e){ CAM.err=e.message||String(e); }
+  pinta();
+}
+function camCerrar(){
+  (CAM.stream?.getTracks()||[]).forEach(t=>t.stop());
+  CAM.stream=null; CAM.on=false; $("#camVid").srcObject=null; pinta();
+}
+/* Marca temporal del fotograma, con la mejor fuente que ofrezca el navegador. */
+function marcaFotograma(v){
+  return new Promise(res=>{
+    if(!v.requestVideoFrameCallback){ res({t:performance.now(), via:"now"}); return; }
+    let hecho=false;
+    const id=setTimeout(()=>{ if(!hecho){hecho=true; res({t:performance.now(), via:"now"});} },500);
+    v.requestVideoFrameCallback((now,md)=>{
+      if(hecho) return; hecho=true; clearTimeout(id);
+      if(md && typeof md.captureTime==="number") res({t:md.captureTime, via:"captureTime"});
+      else if(md && typeof md.presentationTime==="number") res({t:md.presentationTime, via:"presentationTime"});
+      else res({t:now, via:"now"});
+    });
+  });
+}
+async function camCapturar(){
+  if(SYNC.off===null){ alert("Sincroniza primero con UTC."); return; }
+  const v=$("#camVid");
+  const m=await marcaFotograma(v);
+  CAM.via=m.via;
+  const c=document.createElement("canvas");
+  c.width=v.videoWidth||1280; c.height=v.videoHeight||720;
+  c.getContext("2d").drawImage(v,0,0,c.width,c.height);
+  let i=D.puntos.findIndex(p=>p.utc===null);
+  if(i<0){ D.puntos.push({nom:Math.round((T0+m.t+SYNC.off-(D.puntos[0]?.utc??0))/1000),utc:null,cron:null}); i=D.puntos.length-1; }
+  D.puntos[i].utc = T0+m.t+SYNC.off;
+  D.puntos[i].uFrame = U_FRAME[m.via];
+  IMGS[i]=c.toDataURL("image/jpeg",0.82);
+  guarda(); pinta();
 }
 
 /* ------------------------------------------------------------ incertidumbre */
@@ -264,21 +341,25 @@ function crTic(){
 
    · doble lap: se congelan los dos relojes con dos pulsaciones. El desfase
      entre ellas NO se cancela y entra entero, y domina el presupuesto. */
-function uPunto(){
+function uPunto(p){
   const uCron=(+D.resol||0.01)/Math.sqrt(12);
+  if(p && p.uFrame!==null && p.uFrame!==undefined)        // punto capturado con la cámara
+    return Math.hypot(uCron, p.uFrame, (SYNC.u??20)/1000);
+  if(D.metodo==="camara")
+    return Math.hypot(uCron, U_FRAME[CAM.via||"now"], (SYNC.u??20)/1000);
   if(D.metodo==="foto") return Math.hypot(uCron, +D.uUtcFoto||0.005);
   return Math.hypot(uCron, (SYNC.u??20)/1000, +D.uDesfase||0.040);
 }
-const uIntervalo = () => Math.SQRT2*uPunto();      // origen y punto, independientes
+const uIntervalo = (a,b) => Math.hypot(uPunto(a),uPunto(b));
 const mpeDe = dT => (+D.mpeA||0) + (+D.mpeB||0)*dT/86400;
 
 function resultados(){
   const P=D.puntos, o=P[0];
   if(!o || o.utc===null || o.cron===null) return null;
-  const u=uIntervalo(), U=2*u;
   return P.map((p,i)=>{
     if(i===0) return {i,nom:p.nom,origen:true};
     if(p.utc===null||p.cron===null) return {i,nom:p.nom,vacio:true};
+    const u=uIntervalo(o,p), U=2*u;
     const dT=(p.utc-o.utc)/1000, dS=(+p.cron)-(+o.cron), e=dS-dT;
     const mpe=mpeDe(dT), tur=U>0?mpe/U:null;
     return {i,nom:p.nom,dT,dS,e,U,u,mpe,tur,
@@ -320,7 +401,7 @@ function pinta(){
     ${CR.laps.map((L,i)=>{
       const d=i===0?null:dv[i-1];
       return `<tr><td>${i===0?"<b>origen</b>":i}</td>
-        <td>${fmt(L.t,3)} s</td>
+        <td style="font-family:ui-monospace,monospace;font-size:11.5px">${L.txt||crFmt(L.t)}</td>
         <td>${L.utc===null?(CR.pend?"sincronizando…":"—"):fmt(d?d.dT:0,3)+" s"}</td>
         <td>${!d?"—":`${d.e>=0?"+":""}${fmt(d.e,3)} ± ${fmt(d.U,3)} s`}</td></tr>`;
     }).join("")}</table>
@@ -331,6 +412,15 @@ function pinta(){
         ?"los valores son compatibles con cero, es decir, el oscilador del móvil no es una contribución detectable aquí."
         :"la desviación supera su incertidumbre, lo que sí apunta a un oscilador apreciablemente desviado."}</div>`:""}
     <div class="btns"><button id="crUsar">Usar estas vueltas como puntos de comprobación</button></div></div>`;
+
+  // --- cámara ---
+  $("#camBox").className = CAM.on?"":"hide";
+  $("#camGo").textContent = CAM.on?"Cámara abierta":"Cámara para cronómetro externo";
+  $("#camGo").disabled = CAM.on;
+  $("#camInfo").innerHTML = CAM.err ? `<div class="err">Cámara: ${CAM.err}</div>`
+    : `<div class="note" style="margin:4px 0 0">Apunta al display del cronómetro y pulsa capturar.
+       La foto queda como muestra junto al punto, y abajo tecleas la lectura que se vea en ella.
+       ${CAM.via?`Marca temporal del fotograma: <b>${CAM.via}</b> · incertidumbre ${fmt(U_FRAME[CAM.via],3)} s.`:""}</div>`;
 
   $("#syncDet").className = tecnico?"":"hide";
   $("#syncDet").innerHTML = tecnico? `<div class="card"><div class="note" style="margin:0">
@@ -355,7 +445,8 @@ function pinta(){
   <h2>Método de captura</h2>
   <div class="seg">
     <button class="${D.metodo==="foto"?"on":""}" id="mFoto">Foto de ambos displays</button>
-    <button class="${D.metodo==="lap"?"on":""}" id="mLap">Doble lap simultáneo</button>
+    <button class="${D.metodo==="camara"?"on":""}" id="mCam">Captura con cámara</button>
+    <button class="${D.metodo==="lap"?"on":""}" id="mLap">Doble lap</button>
   </div>`;
 
   if(D.metodo==="foto"){
@@ -367,6 +458,17 @@ function pinta(){
     <div class="note">Por defecto 0,005 s: el reloj se refresca a 60 Hz, de modo que el valor mostrado se queda entre
     0 y 16,7 ms por detrás del real, repartido uniformemente, lo que da 16,7/√12 ≈ 5 ms. El retardo fijo de
     renderizado no cuenta, porque es común a todos los puntos y desaparece al restar.</div>`;
+  } else if(D.metodo==="camara"){
+    const via=CAM.via||"now";
+    h+=`<div class="note">Para cronómetros digitales distintos del móvil. Se abre la cámara bajo el reloj UTC,
+    se apunta al display del cronómetro y se captura: la página guarda la foto como muestra y anota el UTC del
+    <b>fotograma</b>, no el del momento en que pulsaste. Después lees el valor en la foto y lo tecleas.
+    <br><br><b>Qué marca temporal se está usando:</b> ${via==="captureTime"
+      ? "<span style='color:var(--ok)'>captureTime</span>, el instante real de captura en la cámara. El retardo de la tubería de vídeo queda resuelto."
+      : via==="presentationTime"
+      ? "<span style='color:var(--warn)'>presentationTime</span>, el instante de presentación, posterior a la captura en una cantidad desconocida."
+      : "<span style='color:var(--bad)'>ninguna</span>: solo el instante de la llamada, así que el retardo de la vista previa, de 50 a 120 ms en un móvil, entra como incertidumbre."}
+    ${via!=="captureTime"?"<br><br><b>Con esta marca, toma también el origen con la cámara</b> en vez de pulsando a la vez en los dos aparatos: el retardo es el mismo en todas las capturas y se cancela al restar. Si el origen es una pulsación manual, ese retardo deja de cancelarse y se suma como sesgo a todos los puntos.":""}</div>`;
   } else {
     h+=`<div class="note">Se congelan los dos relojes con dos pulsaciones simultáneas, el <i>lap</i> del cronómetro y
     el botón de esta pantalla, y después se fotografía el display para dejar constancia.
@@ -374,13 +476,14 @@ function pinta(){
     los dos relojes.</div>
     <div class="row"><label>Desfase entre pulsaciones</label><input type="number" step="0.005" id="fUD" value="${D.uDesfase}"><span class="u">s</span></div>`;
   }
+  const uI0=uIntervalo(null,null);
   h+=`<div class="card">
     <div class="kv"><span>incertidumbre por punto</span><b>${fmt(uPunto(),4)} s</b></div>
-    <div class="kv"><span>U del intervalo (k = 2)</span><b>± ${fmt(2*uIntervalo(),4)} s</b></div>
-    <div class="kv"><span>TUR frente al término fijo del criterio</span><b>${fmt(D.mpeA/(2*uIntervalo()),1)} : 1 ${
-      D.mpeA/(2*uIntervalo())>=D.tur?"✓":"✗"}</b></div>
+    <div class="kv"><span>U del intervalo (k = 2)</span><b>± ${fmt(2*uI0,4)} s</b></div>
+    <div class="kv"><span>TUR frente al término fijo del criterio</span><b>${fmt(D.mpeA/(2*uI0),1)} : 1 ${
+      D.mpeA/(2*uI0)>=D.tur?"✓":"✗"}</b></div>
   </div>`;
-  if(D.metodo==="lap" && D.mpeA/(2*uIntervalo())<D.tur)
+  if(D.metodo!=="foto" && D.mpeA/(2*uI0)<D.tur)
     h+=`<div class="verdict v-no">Con este desfase el método no discrimina el criterio: la incertidumbre es
       comparable a la propia tolerancia. Pasa al método fotográfico.</div>`;
 
@@ -409,7 +512,9 @@ function pinta(){
     ${D.puntos.map((p,i)=>`<tr>
       <td><b>${i===0?"Origen":nomTxt(p.nom)}</b></td>
       <td style="font-family:ui-monospace,monospace;font-size:11.5px">${p.utc===null?"—":hms(p.utc).h}</td>
-      <td><input type="number" step="0.001" class="pc" data-i="${i}" value="${p.cron??""}" placeholder="s"></td>
+      <td><input type="number" step="0.001" class="pc" data-i="${i}" value="${p.cron??""}" placeholder="s">
+          ${IMGS[i]?`<a href="${IMGS[i]}" download="punto-${i}.jpg"><img src="${IMGS[i]}"
+             style="width:100%;max-width:120px;border-radius:5px;margin-top:4px;display:block"></a>`:""}</td>
       <td><button class="mini pcap" data-i="${i}" style="padding:5px 8px;font-size:11.5px">${D.metodo==="lap"?"lap":"ahora"}</button>
           ${i>1?`<button class="mini pdel" data-i="${i}" style="padding:5px 7px;font-size:11.5px">×</button>`:""}</td>
     </tr>
@@ -505,6 +610,7 @@ function enlaza(){
   num("fUF","uUtcFoto"); num("fUD","uDesfase");
   on("mFoto","click",()=>{D.metodo="foto"; guarda(); pinta();});
   on("mLap","click",()=>{D.metodo="lap"; guarda(); pinta();});
+  on("mCam","click",()=>{D.metodo="camara"; guarda(); pinta();});
 
   document.querySelectorAll(".fk").forEach(x=>x.addEventListener("change",e=>{
     D.func[e.target.dataset.k]=e.target.checked; guarda();}));
@@ -568,7 +674,9 @@ function registro(){
     "Verificación por comparación directa en varios puntos repartidos por el rango habitual de uso, contra una",
     "referencia UTC obtenida por servicio horario en red. Todos los puntos se comparan contra un punto de origen",
     "común, de modo que cualquier desfase constante de la referencia se cancela al restar.","",
-    D.metodo==="foto"
+    D.metodo==="camara"
+      ? "Captura de cada punto: fotografía del display del cronómetro tomada por la propia aplicación, que anota el\ninstante UTC del fotograma mediante la marca temporal "+(CAM.via||"no disponible")+". La imagen se conserva como\nmuestra de la lectura."
+      : D.metodo==="foto"
       ? "Captura de cada punto: fotografía única que recoge, con el cronómetro en marcha, su display y el reloj UTC\nen pantalla. La imagen establece la simultaneidad, por lo que no intervienen el tiempo de reacción del\noperador ni el desfase entre pulsaciones."
       : "Captura de cada punto: doble pulsación simultánea del lap del cronómetro y del botón de captura en pantalla,\ncon fotografía posterior del display congelado como constancia. El desfase entre ambas pulsaciones no se\ncancela y constituye la contribución dominante.",
     "","### Fuentes horarias utilizadas","",
@@ -640,15 +748,20 @@ function registro(){
 $("#crGo").addEventListener("click",async()=>{
   if(SYNC.off===null){ alert("Sincroniza primero con UTC."); return; }
   if(CR.corriendo) return;
-  CR.t0=performance.now(); CR.corriendo=true; CR.laps=[]; pinta();
+  CR.t0=performance.now(); CR.tStop=null; CR.corriendo=true; CR.laps=[]; pinta();
   await crMarca("origen");});
 $("#crLap").addEventListener("click",()=>{ if(CR.corriendo) crMarca("vuelta"); });
 $("#crStop").addEventListener("click",async()=>{
   if(!CR.corriendo) return;
+  CR.tStop=performance.now();            // congela el display, que antes seguía corriendo
   CR.corriendo=false; await crMarca("parada"); });
 $("#crCero").addEventListener("click",()=>{
   if(CR.laps.length&&!confirm("¿Borrar las vueltas?")) return;
-  CR.t0=null; CR.corriendo=false; CR.laps=[]; pinta(); });
+  CR.t0=null; CR.tStop=null; CR.corriendo=false; CR.laps=[]; pinta(); });
+
+$("#camGo").addEventListener("click",()=>{ D.metodo="camara"; guarda(); camAbrir(); });
+$("#camCap").addEventListener("click",camCapturar);
+$("#camOff").addEventListener("click",camCerrar);
 
 $("#bSync").addEventListener("click",sincroniza);
 $("#bTec").addEventListener("click",()=>{tecnico=!tecnico; pinta();});
