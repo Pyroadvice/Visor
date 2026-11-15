@@ -159,9 +159,10 @@ async function sondeaCabecera(url, intentos=60){
 /* Sondea TODAS las fuentes, conserva el detalle de cada una y devuelve la de
    menor ida y vuelta. El detalle por servidor se muestra en pantalla y se
    vuelca al registro: la referencia de tiempos tiene que quedar identificada. */
-async function sondeoMulti(reps=3){
+async function sondeoMulti(reps=3, soloMejor=false){
   const det=[], buenos=[];
-  for(const f of FUENTES){
+  const lista = soloMejor && SYNC.fuente ? FUENTES.filter(f=>f.n===SYNC.fuente) : FUENTES;
+  for(const f of (lista.length?lista:FUENTES)){
     const r={n:f.n, url:f.url, ok:false, rtt:null, off:null, err:null, n_ok:0};
     for(let k=0;k<reps;k++){
       try{ const x=await sondea(f); buenos.push(x); r.ok=true; r.n_ok++;
@@ -214,14 +215,23 @@ function tic(){
    reloj monótono que el cronómetro: solo una consulta nueva a la red aporta
    una referencia independiente de ese oscilador. */
 function crElapsed(){ return CR.t0===null?0:(performance.now()-CR.t0)/1000; }
+let crUltima=0;
 async function crMarca(etiqueta){
-  const tAbs=performance.now(), t=(tAbs-CR.t0)/1000;
+  const ahora=performance.now();
+  if(ahora-crUltima<250) return;        // rebote: dos vueltas no caben en 250 ms
+  crUltima=ahora;
+  const tAbs=ahora, t=(tAbs-CR.t0)/1000;
   const L={t, utc:null, u:null, fuente:null, et:etiqueta};
   CR.laps.push(L); CR.pend++; pinta();
-  const r=await sondeoMulti(3);
+  /* En cada vuelta solo se consulta el servidor más rápido: tres peticiones
+     en vez de nueve. El barrido completo de todas las fuentes, que es el que
+     da la comprobación cruzada del registro, lo hace el botón de sincronizar. */
+  let r=await sondeoMulti(3,true);
+  if(r.off===undefined) r=await sondeoMulti(2);
   CR.pend--;
   if(r.off!==undefined){ L.utc=T0+tAbs+r.off; L.u=r.u; L.fuente=r.fuente;
-    SYNC.off=r.off; SYNC.u=r.u; SYNC.fuente=r.fuente; SYNC.rtt=r.rtt; SYNC.fuentes=r.det; }
+    SYNC.off=r.off; SYNC.u=r.u; SYNC.rtt=r.rtt;
+    if(r.det.length>=FUENTES.length){ SYNC.fuente=r.fuente; SYNC.fuentes=r.det; } }
   else L.fuente="sin respuesta";
   pinta();
 }
@@ -518,14 +528,6 @@ function enlaza(){
     if(!confirm("¿Restaurar los puntos a origen, 10 s, 3 min y 5 min? Se pierden las lecturas.")) return;
     D.puntos=NOM_DEF.map(n=>({nom:n,utc:null,cron:null})); guarda(); pinta();});
 
-  on("crGo","click",async()=>{
-    if(SYNC.off===null){ alert("Sincroniza primero con UTC."); return; }
-    CR.t0=performance.now(); CR.corriendo=true; CR.laps=[]; pinta();
-    await crMarca("origen");});
-  on("crLap","click",()=>{ crMarca("vuelta"); });
-  on("crStop","click",async()=>{ CR.corriendo=false; await crMarca("parada"); });
-  on("crCero","click",()=>{ if(CR.laps.length&&!confirm("¿Borrar las vueltas?")) return;
-    CR.t0=null; CR.corriendo=false; CR.laps=[]; pinta(); });
   on("crUsar","click",()=>{
     const L=CR.laps.filter(x=>x.utc!==null);
     if(L.length<2){ alert("Hacen falta al menos dos vueltas con referencia."); return; }
@@ -630,6 +632,23 @@ function registro(){
     "   en el del instrumento.","");
   return L.join("\n");
 }
+
+/* Los controles del cronómetro viven en el encabezado, que NO se repinta.
+   Se enlazan una sola vez, aquí: hacerlo dentro de enlaza(), que corre en
+   cada repintado, acumulaba un manejador por repintado y una pulsación
+   acababa generando decenas de vueltas. */
+$("#crGo").addEventListener("click",async()=>{
+  if(SYNC.off===null){ alert("Sincroniza primero con UTC."); return; }
+  if(CR.corriendo) return;
+  CR.t0=performance.now(); CR.corriendo=true; CR.laps=[]; pinta();
+  await crMarca("origen");});
+$("#crLap").addEventListener("click",()=>{ if(CR.corriendo) crMarca("vuelta"); });
+$("#crStop").addEventListener("click",async()=>{
+  if(!CR.corriendo) return;
+  CR.corriendo=false; await crMarca("parada"); });
+$("#crCero").addEventListener("click",()=>{
+  if(CR.laps.length&&!confirm("¿Borrar las vueltas?")) return;
+  CR.t0=null; CR.corriendo=false; CR.laps=[]; pinta(); });
 
 $("#bSync").addEventListener("click",sincroniza);
 $("#bTec").addEventListener("click",()=>{tecnico=!tecnico; pinta();});
