@@ -165,21 +165,69 @@ const PASO = () => S.paso==="fino" ? 0.25 : 4;   // en píxeles de imagen
 
 /* ------------------------------------------------------------- sensores */
 let sensorOn = false;
-/* Descomposición limpia del vector gravedad en el marco del dispositivo:
-   - elevación (cabeceo, adelante/atrás) = asin(−gz/|g|), invariante al balanceo
-     porque el balanceo gira alrededor del eje óptico y no toca gz.
-   - balanceo lateral ρ = atan2(gx, gy), cero con el móvil vertical en retrato.
-   Es el ángulo que gira la imagen y por tanto el que rompe la verticalidad
-   del eje y de la foto. */
-function fijaGrav(gx,gy,gz,src){
+
+/* ---------------------------------------------------------------------
+   Resolución de los sensores en el navegador.
+
+   Chrome redondea las lecturas para mitigar la huella digital por
+   calibración de fábrica (ataque SensorID). Los dos redondeos no son
+   equivalentes para medir ángulos:
+
+     · Acelerómetro / GravitySensor: 0,1 m/s². Con el móvil casi vertical
+       eso son 0,1/9,81 rad = 0,584° de salto, porque dρ/dg = 1/|g|.
+     · DeviceOrientationEvent: 0,1° directamente sobre el ángulo.
+
+   Por eso la orientación es la fuente preferente y la gravedad queda de
+   respaldo y de comprobación cruzada. Además se promedia en una ventana:
+   el ruido del sensor hace oscilar la lectura entre escalones contiguos
+   en proporción a dónde cae el valor real, así que el promedio recupera
+   resolución por debajo del escalón. La dispersión de la ventana dice si
+   ese tramado está funcionando o si la lectura se ha quedado clavada en
+   un escalón, caso en el que promediar no aporta nada.
+   --------------------------------------------------------------------- */
+const VENTANA = 1500;                    // ms de promediado
+const SENS = {
+  grav:{p:null,r:null,n:0,sp:new Set(),sr:new Set(),pasoP:null,pasoR:null},
+  ori :{p:null,r:null,n:0,sp:new Set(),sr:new Set(),pasoP:null,pasoR:null},
+  pref:"ori", buf:[], err:""
+};
+function pasoDe(s){
+  const v=[...s].sort((a,b)=>a-b); let m=Infinity;
+  for(let i=1;i<v.length;i++){ const d=v[i]-v[i-1]; if(d>1e-7&&d<m) m=d; }
+  return isFinite(m)?m:null;
+}
+function anota(src,p,r){
+  const o=SENS[src]; o.p=p; o.r=r; o.n++;
+  if (o.sp.size<600 && p!==null) o.sp.add(+p.toFixed(6));
+  if (o.sr.size<600 && r!==null) o.sr.add(+r.toFixed(6));
+  if (o.n%15===0){ o.pasoP=pasoDe(o.sp); o.pasoR=pasoDe(o.sr); }
+  if (src===SENS.pref || SENS[SENS.pref].n===0){
+    const t=performance.now();
+    SENS.buf.push({t,p,r});
+    while(SENS.buf.length && t-SENS.buf[0].t>VENTANA) SENS.buf.shift();
+  }
+  pintaBadges();
+}
+function media(){
+  const b=SENS.buf;
+  if (!b.length) return {p:null,r:null,sp:null,sr:null,n:0};
+  const pp=b.filter(x=>x.p!==null), rr=b.filter(x=>x.r!==null);
+  const mp=pp.length?pp.reduce((s,x)=>s+x.p,0)/pp.length:null;
+  const mr=rr.length?rr.reduce((s,x)=>s+x.r,0)/rr.length:null;
+  const sp=mp===null?null:Math.sqrt(pp.reduce((s,x)=>s+(x.p-mp)**2,0)/pp.length);
+  const sr=mr===null?null:Math.sqrt(rr.reduce((s,x)=>s+(x.r-mr)**2,0)/rr.length);
+  return {p:mp, r:mr, sp, sr, n:b.length};
+}
+/* Vector gravedad: cabeceo = asin(−gz/|g|), invariante al balanceo porque
+   el balanceo gira alrededor del eje óptico y no toca gz. Balanceo lateral
+   ρ = atan2(gx, gy), cero con el móvil vertical en retrato. */
+function fijaGrav(gx,gy,gz){
   const m = Math.hypot(gx,gy,gz) || 1;
-  S.tilt.val  = Math.asin(-gz/m)*180/Math.PI;
-  S.tilt.roll = Math.atan2(gx,gy)*180/Math.PI;
-  S.tilt.n++; S.tilt.src=src; pintaBadges();
+  anota("grav", Math.asin(-gz/m)*180/Math.PI, Math.atan2(gx,gy)*180/Math.PI);
 }
 async function activaSensores(){
   if (sensorOn) return;
-  S.tilt.err="";
+  SENS.err="";
   try{
     if (typeof DeviceMotionEvent!=="undefined" && typeof DeviceMotionEvent.requestPermission==="function"){
       const r = await DeviceMotionEvent.requestPermission();
@@ -188,40 +236,41 @@ async function activaSensores(){
     if (typeof DeviceOrientationEvent!=="undefined" && typeof DeviceOrientationEvent.requestPermission==="function"){
       try{ await DeviceOrientationEvent.requestPermission(); }catch(e){}
     }
-  }catch(e){ S.tilt.err=e.message; }
+  }catch(e){ SENS.err=e.message; }
+
+  // Fuente fina (rejilla de 0,1° sobre el ángulo): orientación.
+  window.addEventListener("deviceorientation", ev=>{
+    if (ev.beta===null && ev.gamma===null) return;
+    anota("ori", ev.beta===null?null:ev.beta-90, ev.gamma ?? null);
+  });
+  // Fuente de respaldo y comprobación cruzada: gravedad (0,1 m/s² → 0,58°).
   try{
     if ("GravitySensor" in window){
-      const g = new GravitySensor({frequency:20});
-      g.addEventListener("reading", ()=>fijaGrav(g.x,g.y,g.z,"GravitySensor"));
-      g.addEventListener("error", ev=>{ S.tilt.err = ev.error?.message || "error GravitySensor"; });
+      const g = new GravitySensor({frequency:60});
+      g.addEventListener("reading", ()=>fijaGrav(g.x,g.y,g.z));
+      g.addEventListener("error", ev=>{ SENS.err = ev.error?.message || "error GravitySensor"; });
       g.start(); sensorOn=true;
     }
-  }catch(e){ S.tilt.err=e.message; }
+  }catch(e){ SENS.err=e.message; }
   if (!sensorOn){
     window.addEventListener("devicemotion", ev=>{
       const a = ev.accelerationIncludingGravity; if(!a||a.x===null) return;
-      fijaGrav(a.x,a.y,a.z,"devicemotion");
+      fijaGrav(a.x,a.y,a.z);
     });
-    sensorOn=true;
   }
-  window.addEventListener("deviceorientation", ev=>{
-    if (S.tilt.src==="GravitySensor"||S.tilt.src==="devicemotion") return;
-    if (ev.beta===null) return;
-    S.tilt.val = ev.beta-90; S.tilt.roll = ev.gamma ?? null;
-    S.tilt.n++; S.tilt.src="deviceorientation"; pintaBadges();
-  });
+  sensorOn=true;
   pinta();
 }
 function tiltUsado(){
   if (S.med.fuente==="manual") return +(S.med.phiManual ?? 0);
   if (S.tiltFijo!==null) return S.tiltFijo + perfil().delta;
-  if (S.tilt.val===null) return null;
-  return S.tilt.val + perfil().delta;
+  const m = media().p;
+  return m===null ? null : m + perfil().delta;
 }
 function rollUsado(){
   if (S.med.fuente==="manual") return (S.med.rollManual===""||S.med.rollManual===undefined)?null:+S.med.rollManual;
   if (S.rollFijo!==null) return S.rollFijo;
-  return S.tilt.roll;
+  return media().r;
 }
 /* Umbrales de balanceo lateral. Recomendación propia, no requisito normativo:
    mantienen la contribución del balanceo por debajo del 1 % de la altura en
@@ -510,7 +559,11 @@ function congela(){
   cancelAnimationFrame(vidRAF);
   ($("#vid").srcObject?.getTracks()||[]).forEach(t=>t.stop());
   $("#vid").srcObject=null;
-  if (S.med.fuente==="sensor" && S.tilt.val!==null) S.tiltFijo=S.tilt.val;
+  if (S.med.fuente==="sensor"){                  // fija los dos ángulos del instante
+    const M=media();
+    if (M.p!==null) S.tiltFijo=M.p;
+    if (M.r!==null) S.rollFijo=M.r;
+  }
   S.src={kind:"img", el:c, w:c.width, h:c.height};
   encaja(); pinta();
 }
@@ -586,6 +639,44 @@ function pinta(){
   enlaza(); dibuja(); pintaBadges();
 }
 
+function diagHTML(){
+  const M=media();
+  const fila=(nom,o,clave)=>`<tr>
+    <td>${nom}</td>
+    <td>${o.n?fmt(o[clave==="p"?"p":"r"],2):"—"}</td>
+    <td>${o[clave==="p"?"pasoP":"pasoR"]===null||o[clave==="p"?"pasoP":"pasoR"]===undefined?"—":fmt(o[clave==="p"?"pasoP":"pasoR"],3)}</td>
+    <td>${o.n}</td></tr>`;
+  const dither = (s,paso)=> (s===null||paso===null||paso===undefined) ? null : s/paso;
+  const dP = dither(M.sp, SENS[SENS.pref].pasoP), dR = dither(M.sr, SENS[SENS.pref].pasoR);
+  const juicio = d => d===null ? "—"
+    : (d>0.25 ? "promedio efectivo" : (d>0.05 ? "tramado escaso" : "lectura clavada en un escalón"));
+  return `<h3>Resolución de los sensores</h3>
+  <div class="seg">
+    <button class="${SENS.pref==="ori"?"on":""}" id="sOri">Orientación · 0,1°</button>
+    <button class="${SENS.pref==="grav"?"on":""}" id="sGrav">Gravedad · 0,58°</button>
+  </div>
+  <table>
+    <tr><th>Fuente · cabeceo</th><th>último (°)</th><th>escalón (°)</th><th>n</th></tr>
+    ${fila("Orientación",SENS.ori,"p")}
+    ${fila("Gravedad",SENS.grav,"p")}
+    <tr><th>Fuente · balanceo</th><th>último (°)</th><th>escalón (°)</th><th>n</th></tr>
+    ${fila("Orientación",SENS.ori,"r")}
+    ${fila("Gravedad",SENS.grav,"r")}
+  </table>
+  <div class="kv"><span>promedio de ${fmt(VENTANA/1000,1)} s</span><b>${M.n} muestras</b></div>
+  <div class="kv"><span>dispersión del cabeceo</span><b>${fmt(M.sp,3)}° · ${juicio(dP)}</b></div>
+  <div class="kv"><span>dispersión del balanceo</span><b>${fmt(M.sr,3)}° · ${juicio(dR)}</b></div>
+  <div class="note">La columna «escalón» es el salto mínimo realmente observado entre lecturas distintas:
+  la mide la página, no la supongo. El acelerómetro viene redondeado a 0,1 m/s², que junto al móvil vertical
+  son 0,584°; la orientación viene redondeada a 0,1° sobre el propio ángulo. Es una mitigación del navegador
+  contra la identificación del dispositivo por la calibración de fábrica del sensor, no un ajuste de la aplicación.
+  <br><br>El valor que se usa para medir es el <b>promedio de la ventana</b>. Si la dispersión es del orden del
+  escalón, el ruido está haciendo oscilar la lectura entre escalones contiguos y el promedio recupera resolución
+  por debajo de ${fmt(VENTANA/1000,1)} s. Si la dispersión es casi nula, la lectura está clavada y el promedio
+  no mejora nada: ahí el escalón es el límite y conviene tomar φ del ajuste óptico en Calibración, que da
+  del orden de 0,1°.</div>`;
+}
+
 function navHTML(){
   return `<h3>Colocación de la cruz</h3>
   <div class="seg">
@@ -651,7 +742,7 @@ function uiMedida(m){
   <b>El balanceo sí es un error directo</b>, porque gira el eje y de la imagen respecto a la vertical real.</div>
   ${S.med.fuente==="sensor" ? `<div class="btns">
     ${S.rollFijo!==null?'<button id="bUnfreezeR">Liberar balanceo</button>':'<button id="bFreezeR">Congelar balanceo</button>'}
-  </div>`:""}`;
+  </div>` + diagHTML() : ""}`;
 
   /* --- marcas --- */
   h += `<h3>Marcas</h3>
@@ -704,9 +795,9 @@ function uiMedida(m){
       ${sensorOn?"":'<button class="p" id="bSens">Activar sensores</button>'}
       ${S.tiltFijo!==null?'<button id="bUnfreeze">Liberar inclinación</button>':'<button id="bFreezeT">Congelar inclinación</button>'}
     </div>
-    <div class="note">Lectura: ${S.tilt.val===null?"sin datos":fmt(S.tilt.val,2)+"° ("+S.tilt.src+", "+S.tilt.n+" muestras)"}.
+    <div class="note">Fuente: ${SENS.pref==="ori"?"orientación":"gravedad"}, ${SENS[SENS.pref].n} muestras.
     Corrección de desalineación aplicada: ${(perfil().delta>=0?"+":"")+fmt(perfil().delta,3)}°.</div>`;
-    if (S.tilt.err) h += `<div class="err">${S.tilt.err}</div>`;
+    if (SENS.err) h += `<div class="err">${SENS.err}</div>`;
   }
 
   /* --- resultados --- */
@@ -875,13 +966,15 @@ function enlaza(){
   on("bLoadDoc","click",()=>$("#fDoc").click());
   on("bLoadVid","click",()=>$("#fVid").click());
   on("bLoadVidDoc","click",()=>$("#fVidDoc").click());
-  on("bFreezeR","click",()=>{ if(S.tilt.roll!==null){S.rollFijo=S.tilt.roll; pinta();} });
+  on("bFreezeR","click",()=>{ const r=media().r; if(r!==null){S.rollFijo=r; pinta();} });
   on("bUnfreezeR","click",()=>{ S.rollFijo=null; pinta(); });
+  on("sOri","click",()=>{SENS.pref="ori"; SENS.buf=[]; pinta();});
+  on("sGrav","click",()=>{SENS.pref="grav"; SENS.buf=[]; pinta();});
   on("bLive","click",abreDirecto);
   on("bFreeze","click",congela);
   on("bFit","click",()=>{encaja();dibuja();pintaBadges();});
   on("bSens","click",activaSensores);
-  on("bFreezeT","click",()=>{ if(S.tilt.val!==null){S.tiltFijo=S.tilt.val; pinta();} });
+  on("bFreezeT","click",()=>{ const p=media().p; if(p!==null){S.tiltFijo=p; pinta();} });
   on("bUnfreeze","click",()=>{ S.tiltFijo=null; pinta(); });
 
   // marcas
