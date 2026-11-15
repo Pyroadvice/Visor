@@ -151,7 +151,8 @@ const S = {
   view:{s:1, tx:0, ty:0, fit:1},
   calib:{ puntos:[], d:100, hCam:0, sensor:0, out:null, tipo:"phi" },
   reticula:false,
-  liveErr:""
+  liveErr:"",
+  tecnico: localStorage.getItem("vpd.tecnico")==="1"
 };
 const guarda = () => {
   localStorage.setItem("vpd.perfiles", JSON.stringify(S.perfiles));
@@ -707,13 +708,13 @@ function navHTML(){
 }
 
 function uiMedida(m){
-  const R = medidas(), g = geom();
+  const R = medidas(), g = geom(), T = S.tecnico;
   let h = "";
 
+  /* --- carga --- */
   if (m==="foto") h += `<div class="btns">
     <button class="p" id="bLoadImg">Galería / cámara</button>
-    <button id="bLoadDoc">Archivo</button></div>
-    <div class="note">«Archivo» abre el selector de documentos, para imágenes en Descargas, Drive, Dropbox o cualquier carpeta del dispositivo.</div>`;
+    <button id="bLoadDoc">Archivo</button></div>`;
   if (m==="video"){
     h += `<div class="btns">
       <button class="p" id="bLoadVid">Galería</button>
@@ -723,114 +724,112 @@ function uiMedida(m){
       <button id="vBack10">⏪ 10</button><button id="vBack">◀</button>
       <button id="vFwd">▶</button><button id="vFwd10">10 ⏩</button>
     </div>
-    <div class="note">Fotograma actual: <b id="vTime">—</b>. Paso de 1/50 s.
-    Busca el fotograma del fogonazo de disparo para el origen y los de cada altura que quieras medir.</div>`;
+    <div class="note">Fotograma <b id="vTime">—</b> · paso de 1/50 s.</div>`;
   }
   if (m==="directo"){
     h += S.src&&S.src.kind==="live"
-      ? `<div class="btns"><button class="o" id="bFreeze">Congelar fotograma</button></div>
-         <div class="note">Al congelar se guarda la inclinación del sensor de ese instante y el fotograma pasa a medirse como una foto.</div>`
+      ? `<div class="btns"><button class="o" id="bFreeze">Congelar fotograma</button></div>`
       : `<div class="btns"><button class="p" id="bLive">Abrir cámara</button></div>`;
     if (S.liveErr) h += `<div class="err">Cámara: ${S.liveErr}</div>`;
   }
+  if (!S.src) return h + `<div class="note">Perfil activo: <b>${perfil().name}</b>.</div>` + tecBoton();
 
-  if (!S.src) return h + `<div class="note">Perfil de calibración activo: <b>${perfil().name}</b>.</div>`;
-
-  /* --- ángulos de la toma --- */
+  /* --- toma: distancia y ángulos --- */
   const rl = rollUsado(), sem = semaforoRoll(rl), tt = tiltUsado();
-  if (esVivo()){
-    h += `<h3>Encuadre en directo</h3>
-    <div class="res">
-      <div class="big"><s>Balanceo lateral ρ</s><b style="color:${sem.cls==="v-ok"?"var(--ok)":(sem.cls==="v-no"?"var(--bad)":"var(--warn)")}">${rl===null?"—":(rl>=0?"+":"")+fmt(rl,2)+"°"}</b></div>
-      <div class="big"><s>Cabeceo φ (con δ)</s><b>${tt===null?"—":(tt>=0?"+":"")+fmt(tt,2)+"°"}</b></div>
-      <div class="verdict ${sem.cls}">${sem.txt}</div>
-    </div>
-    ${sensorOn?"":'<div class="btns"><button class="p" id="bSens">Activar sensores</button></div>'}
-    <div class="note">Al congelar el fotograma, estos dos valores se copian a las casillas de la toma,
-    donde quedan visibles y editables.</div>` + diagHTML();
-  } else {
-    h += `<h3>Ángulos de la toma</h3>
-    <div class="row"><label>Cabeceo φ</label><input type="number" step="0.01" id="iPhi"
-      value="${S.med.phiManual??""}" placeholder="lectura del sensor en la toma"><span class="u">°</span></div>
-    <div class="row"><label>Balanceo ρ</label><input type="number" step="0.01" id="iRoll"
-      value="${S.med.rollManual??""}" placeholder="opcional"><span class="u">°</span></div>
-    <div class="note">Son datos <b>de la toma</b>, no del momento actual: introduce la lectura que anotaste
-    al disparar. La aplicación añade la desalineación δ = ${(perfil().delta>=0?"+":"")+fmt(perfil().delta,3)}° al cabeceo,
-    así que teclea el valor crudo del sensor. El sensor de ahora no sabe nada de la inclinación que tenía la cámara
-    cuando se hizo la foto, por eso no se usa aquí.</div>
-    ${phiSupuesto()?`<div class="verdict v-na">Cabeceo no registrado: se supone φ = 0 (cámara a plomo).
-      Con el origen sobre el punto de disparo el error se cancela en gran parte, pero
-      sube u(φ) en Ajustes para que el presupuesto lo refleje.</div>`:""}
-    ${rl!==null?`<div class="verdict ${sem.cls}">Balanceo introducido: ${sem.txt}</div>`:""}`;
-  }
-  h += `<div class="note"><b>El cabeceo no tiene límite</b>: el modelo lo usa como dato, así que inclinar adelante
-  o atrás no introduce error por sí mismo. Lo que importa es que origen y punto queden a un lado y otro del centro
-  de la imagen, y eso se vigila con la suma r<sub>origen</sub> + r<sub>punto</sub> del presupuesto, no con el ángulo.
-  <b>El balanceo sí es un error directo</b>, porque gira el eje y de la imagen respecto a la vertical real.</div>`;
+  h += `<h3>Toma</h3>
+  <div class="row"><label>Distancia</label><input type="number" step="0.01" id="iD" value="${S.med.d}"><span class="u">m</span></div>`;
 
-  /* --- marcas --- */
-  h += `<h3>Marcas</h3>
+  if (esVivo()){
+    const colR = sem.cls==="v-ok"?"var(--ok)":(sem.cls==="v-no"?"var(--bad)":"var(--warn)");
+    h += `<div class="row"><label>Cabeceo φ</label>
+      <div style="flex:1;font:700 17px ui-monospace,monospace">${tt===null?"—":(tt>=0?"+":"")+fmt(tt,2)+"°"}</div></div>
+    <div class="row"><label>Balanceo ρ</label>
+      <div style="flex:1;font:700 17px ui-monospace,monospace;color:${colR}">${rl===null?"—":(rl>=0?"+":"")+fmt(rl,2)+"°"}</div></div>
+    ${sensorOn?"":'<div class="btns"><button class="p" id="bSens">Activar sensores</button></div>'}
+    <div class="note">Al congelar, estos ángulos pasan a ser datos de la toma.</div>`;
+  } else {
+    h += `<div class="row"><label>Cabeceo φ</label><input type="number" step="0.01" id="iPhi"
+      value="${S.med.phiManual??""}" placeholder="lectura del sensor al disparar"><span class="u">°</span></div>
+    <div class="row"><label>Balanceo ρ</label><input type="number" step="0.01" id="iRoll"
+      value="${S.med.rollManual??""}" placeholder="opcional"><span class="u">°</span></div>`;
+    if (phiSupuesto()) h += `<div class="verdict v-na">Sin cabeceo: se supone cámara a plomo</div>`;
+    else if (rl!==null && sem.cls!=="v-ok") h += `<div class="verdict ${sem.cls}">Balanceo ${fmt(Math.abs(rl),1)}°: revisa la columna Δx</div>`;
+  }
+
+  if (T){
+    h += `<div class="row"><label>u(distancia)</label><input type="number" step="0.1" id="iUd" value="${S.med.ud}"><span class="u">%</span></div>
+    <div class="row"><label>Cota del origen</label><input type="number" step="0.01" id="iHref" value="${S.med.hRef}"><span class="u">m</span></div>
+    <div class="note"><b>Cota del origen</b>: altura del punto de disparo sobre el plano al que quieras referir
+    los resultados. Déjala en cero y las alturas salen medidas desde el propio punto de disparo, que es como
+    las define la norma. Solo se usa cuando el informe tiene que darlas sobre otra referencia.
+    <br><br>Los ángulos son datos <b>de la toma</b>: el sensor de ahora no sabe nada de cómo estaba la cámara
+    cuando se capturó la imagen. En el cabeceo se teclea la lectura cruda y la aplicación añade
+    δ = ${(perfil().delta>=0?"+":"")+fmt(perfil().delta,3)}°.
+    <br><br><b>El cabeceo no tiene límite</b>: el modelo lo usa como dato y no introduce error por sí mismo.
+    Lo que importa es que origen y punto queden a un lado y otro del centro de la imagen, vigilado por la suma
+    r<sub>origen</sub> + r<sub>punto</sub>. <b>El balanceo sí es error directo</b>, porque gira el eje y de la
+    imagen respecto a la vertical real; se anula cuando origen y punto están en la misma vertical.</div>`;
+    if (SENS.err) h += `<div class="err">${SENS.err}</div>`;
+  }
+
+  /* --- marcas y resultados en una sola tabla --- */
+  h += `<h3>Marcas y alturas</h3>
   <table>
-    <tr><th>Marca</th><th>y (px)</th><th>Δx (px)</th><th>r (%)</th><th></th></tr>
+    <tr><th>Marca</th>${T?"<th>y</th><th>Δx</th>":""}<th>Altura</th><th>% de d</th><th>±U</th><th></th></tr>
     <tr class="${S.sel===-1?"sel":""}">
       <td><span class="dot" style="background:#ff7b40"></span><b>Origen</b></td>
-      <td>${S.marks.origen===null?"—":fmt(S.marks.origen.y,1)}</td>
-      <td>0</td>
-      <td>—</td>
+      ${T?`<td>${S.marks.origen===null?"—":fmt(S.marks.origen.y,1)}</td><td>0</td>`:""}
+      <td colspan="3" style="text-align:left;color:var(--dim)">${S.marks.origen===null?"sin fijar":"punto de disparo"}</td>
       <td><button class="mini mSel" data-i="-1">sel.</button></td>
     </tr>
     ${S.marks.puntos.map((q,i)=>{
       const x = R && R[i] && R[i].y!==null ? R[i] : null;
+      const col = x ? (x.relU<=4?"var(--ok)":(x.relU<=8?"var(--warn)":"var(--bad)")) : "var(--dim)";
       return `<tr class="${S.sel===i?"sel":""}">
         <td><span class="dot" style="background:${COL[i%COL.length]}"></span>
             <input type="text" class="mLab" data-i="${i}" list="dlEtiq" value="${(q.lab||"").replace(/"/g,"&quot;")}"
                    placeholder="etiqueta" style="font:13px inherit"></td>
-        <td>${q.y===null?"—":fmt(q.y,1)}</td>
-        <td>${x&&x.dx!==null?fmt(x.dx,0):"—"}</td>
+        ${T?`<td>${q.y===null?"—":fmt(q.y,1)}</td><td>${x&&x.dx!==null?fmt(x.dx,0):"—"}</td>`:""}
+        <td><b>${x?fmt(x.H,2):"—"}</b></td>
         <td>${x?fmt(100*x.dr,2):"—"}</td>
+        <td style="color:${col}">${x?fmt(x.U,2):"—"}</td>
         <td><button class="mini mSel" data-i="${i}">sel.</button>
             ${S.marks.puntos.length>1?`<button class="mini mDel" data-i="${i}">×</button>`:""}</td>
       </tr>`;
     }).join("")}
   </table>
   <div class="btns">
-    <button class="${S.sel===-1?"o":"p"}" id="bFix">Fijar ${S.sel===-1?"origen":"punto "+(S.sel+1)} en la cruz</button>
+    <button class="${S.sel===-1?"o":"p"}" id="bFix">Fijar ${S.sel===-1?"origen":"punto "+(S.sel+1)}</button>
     <button id="bAdd">+ punto</button>
   </div>
   ${!dentro()?'<div class="err">La cruz está fuera de la imagen.</div>':""}`;
 
+  /* --- veredicto global --- */
+  if (R){
+    const hechos = R.filter(x=>x.y!==null);
+    if (hechos.length){
+      const peor = Math.max(...hechos.map(x=>x.relU));
+      const cls = peor<=4?"v-ok":(peor<=8?"v-na":"v-no");
+      h += `<div class="verdict ${cls}">Incertidumbre máxima ${fmt(peor,2)} % · ${peor<=4
+        ?"cumple el criterio interno de 4 %":"por encima del objetivo interno de 4 %"}</div>`;
+      if (hechos.length>1)
+        h += `<div class="note">Entre marcas: ` +
+          hechos.slice(1).map((x,k)=>`${k+1}→${k+2} <b>${fmt(x.dH-hechos[k].dH,2)} m</b>`).join(" · ") + `</div>`;
+    }
+  }
+
   h += navHTML();
 
-  /* --- datos --- */
-  h += `<h3>Datos de campo</h3>
-  <div class="row"><label>Distancia</label><input type="number" step="0.01" id="iD" value="${S.med.d}"><span class="u">m</span></div>
-  <div class="row"><label>u(distancia)</label><input type="number" step="0.1" id="iUd" value="${S.med.ud}"><span class="u">%</span></div>
-  <div class="row"><label>Cota del origen</label><input type="number" step="0.01" id="iHref" value="${S.med.hRef}"><span class="u">m</span></div>`;
-  if (SENS.err) h += `<div class="err">${SENS.err}</div>`;
+  /* --- retícula --- */
+  h += `<h3>Retícula de tolerancia</h3>
+  <div class="row"><label>Altura nominal</label><input type="number" step="0.1" id="iHnom" value="${S.med.hNom??""}"><span class="u">m</span></div>
+  <div class="row"><label>Tolerancia</label><input type="number" step="1" id="iTol" value="${S.med.tol}"><span class="u">%</span></div>
+  <div class="btns"><button class="${S.reticula?"g":""}" id="bRet">${S.reticula?"Retícula activa":"Mostrar retícula"}</button></div>`;
 
-  /* --- resultados --- */
-  h += `<h3>Resultados</h3>`;
-  if (!R) h += `<div class="res"><div class="note" style="margin:0">Fija el origen de alturas para empezar a medir.</div></div>`;
-  else {
+  /* --- bloque técnico --- */
+  if (T && R){
     const hechos = R.filter(x=>x.y!==null);
-    if (!hechos.length) h += `<div class="res"><div class="note" style="margin:0">Origen fijado. Coloca al menos un punto.</div></div>`;
-    else {
-      h += `<table>
-        <tr><th>Marca</th><th>r (%)</th><th>Altura (m)</th><th>U (m)</th><th>U (%)</th></tr>
-        ${R.map((x,i)=>x.y===null?"":`<tr class="${S.sel===i?"sel":""}">
-          <td><span class="dot" style="background:${COL[i%COL.length]}"></span>${i+1}</td>
-          <td>${fmt(100*x.dr,2)}</td>
-          <td><b>${fmt(x.H,2)}</b></td>
-          <td>± ${fmt(x.U,2)}</td>
-          <td style="color:${x.relU<=4?"var(--ok)":(x.relU<=8?"var(--warn)":"var(--bad)")}">${fmt(x.relU,2)}</td>
-        </tr>`).join("")}
-      </table>`;
-      // diferencias entre puntos consecutivos fijados
-      if (hechos.length>1){
-        h += `<div class="note">Diferencias entre marcas: ` +
-          hechos.slice(1).map((x,k)=>`${k+1}→${k+2}: <b>${fmt(x.dH-hechos[k].dH,2)} m</b>`).join(" · ") +
-          `</div>`;
-      }
+    if (hechos.length){
       const sx = (S.sel>=0 && R[S.sel] && R[S.sel].y!==null) ? R[S.sel] : hechos[0];
       h += `<h3>Presupuesto de incertidumbre · ${sx.lab||"punto"}</h3>
       <table>
@@ -843,26 +842,36 @@ function uiMedida(m){
         <tr><td><b>U (k=2)</b></td><td><b>${fmt(sx.U,3)}</b></td><td>${fmt(sx.relU,2)} %</td></tr>
       </table>
       <div class="note">r<sub>origen</sub> = ${fmt(100*sx.ro,2)} % · r<sub>punto</sub> = ${fmt(100*sx.rt,2)} % ·
-      suma ${fmt(100*(sx.ro+sx.rt),2)} %. Cuanto más cerca de cero esa suma, menos pesan los errores de
-      cabeceo y de focal: conviene que origen y punto queden a un lado y otro del centro de la imagen.</div>
-      <div class="note">Balanceo: separación horizontal entre origen y punto
-      ${sx.dx===null?"no registrada":fmt(sx.dx,0)+" px"}${rl===null?"":", con ρ = "+fmt(rl,2)+"°"}.
-      El error vale (Δx/f)·sen ρ y <b>se anula cuando origen y punto están en la misma vertical de la imagen</b>,
-      igual que el error de cabeceo se anula cuando están a un lado y otro del centro. Si el efecto deriva
-      lateralmente, el balanceo empieza a pesar; si sube a plomo sobre el punto de disparo, no pesa nada.</div>`;
+      suma ${fmt(100*(sx.ro+sx.rt),2)} %, que es el factor del error de cabeceo y de focal.
+      Separación horizontal origen-punto ${sx.dx===null?"no registrada":fmt(sx.dx,0)+" px"}${rl===null?"":", con ρ = "+fmt(rl,2)+"°"},
+      que es el factor del error de balanceo: (Δx/f)·sen ρ.</div>`;
     }
   }
+  if (T){
+    h += `<h3>Trazabilidad</h3>
+    <div class="res">
+      <div class="kv"><span>perfil</span><b>${perfil().name}</b></div>
+      <div class="kv"><span>fotograma</span><b>${S.src.w}×${S.src.h} px</b></div>
+      <div class="kv"><span>focal f</span><b>${fmt(g.f,1)} px (${fmt(perfil().fRel,5)})</b></div>
+      <div class="kv"><span>centro óptico y₀</span><b>${fmt(g.y0,1)} px (${fmt(perfil().y0Rel,5)})</b></div>
+      <div class="kv"><span>desalineación δ</span><b>${(perfil().delta>=0?"+":"")+fmt(perfil().delta,3)}°</b></div>
+      <div class="kv"><span>φ aplicado</span><b>${tt===null?"—":(tt>=0?"+":"")+fmt(tt,3)+"°"}</b></div>
+      <div class="kv"><span>u(marcado) · u(φ)</span><b>${fmt(S.med.upx,1)} px · ${fmt(S.med.uphi,2)}°</b></div>
+      <div class="kv"><span>factor de cobertura</span><b>k = 2</b></div>
+    </div>
+    <div class="note">Modelo: r = tan(arctan((y₀−y)/f) + φ); altura = (r<sub>punto</sub> − r<sub>origen</sub>)·d.
+    ${S.src.w>S.src.h?'<span style="color:var(--warn)">Fotograma en horizontal: el perfil se calibró en vertical.</span>':""}</div>`;
+    if (esVivo()) h += diagHTML();
+  }
+  return h + tecBoton();
+}
 
-  /* --- retícula --- */
-  h += `<h3>Retícula de tolerancia</h3>
-  <div class="row"><label>Altura nominal</label><input type="number" step="0.1" id="iHnom" value="${S.med.hNom??""}"><span class="u">m</span></div>
-  <div class="row"><label>Tolerancia</label><input type="number" step="1" id="iTol" value="${S.med.tol}"><span class="u">%</span></div>
-  <div class="btns"><button class="${S.reticula?"g":""}" id="bRet">${S.reticula?"Retícula activa":"Mostrar retícula"}</button></div>
-  <div class="note">Dibuja los límites sobre la imagen a partir del origen fijado: comparador pasa / no pasa sin leer números.</div>
-
-  <div class="note" style="margin-top:14px">Perfil: <b>${perfil().name}</b> · fotograma ${S.src.w}×${S.src.h} px ·
-  f = ${fmt(g.f,0)} px · centro óptico ${fmt(g.y0,0)} px${S.src.w>S.src.h?' · <span style="color:var(--warn)">fotograma en horizontal: el perfil se calibró en vertical</span>':""}</div>`;
-  return h;
+function tecBoton(){
+  return `<div class="btns" style="margin-top:16px">
+    <button class="${S.tecnico?"g":""}" id="bTec">${S.tecnico
+      ?"Ocultar detalle técnico":"Mostrar detalle técnico"}</button></div>
+  <div class="note">El detalle técnico despliega el presupuesto de incertidumbre, las coordenadas en píxeles
+  y los parámetros del modelo: es lo que justifica la medida ante un organismo notificado. Para medir en campo no hace falta.</div>`;
 }
 
 function uiCalib(){
@@ -1006,6 +1015,8 @@ function enlaza(){
     S.sel = S.marks.puntos.length-1; pinta();
   });
   on("bRet","click",()=>{ S.reticula=!S.reticula; pinta(); });
+  on("bTec","click",()=>{ S.tecnico=!S.tecnico;
+    localStorage.setItem("vpd.tecnico", S.tecnico?"1":"0"); pinta(); });
 
   // navegación
   on("pFino","click",()=>{S.paso="fino";pinta();});
