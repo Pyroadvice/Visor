@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Nivel del eje óptico</title>
+<style>
+:root { color-scheme: dark; }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body { margin:0; padding:16px; background:#111; color:#eee;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+h1 { font-size:15px; font-weight:500; color:#9a9a9a; margin:0 0 14px; }
+.card { background:#1c1c1c; border:1px solid #2e2e2e; border-radius:12px; padding:16px; margin-bottom:12px; }
+.lab { font-size:12px; color:#8e8e8e; margin-bottom:6px; }
+.big { font-size:60px; font-weight:500; line-height:1; font-variant-numeric:tabular-nums; }
+.unit { font-size:22px; color:#8e8e8e; margin-left:4px; }
+.sub { font-size:13px; color:#8e8e8e; margin-top:10px; font-variant-numeric:tabular-nums; }
+.row { display:flex; gap:10px; }
+.row .card { flex:1; margin-bottom:0; }
+.mid { font-size:28px; font-weight:500; font-variant-numeric:tabular-nums; }
+button { width:100%; padding:15px; font-size:16px; font-weight:500; border:0; border-radius:12px;
+  background:#2563c9; color:#fff; margin-bottom:12px; }
+button.sec { background:#2e2e2e; color:#eee; }
+table { width:100%; border-collapse:collapse; font-size:12.5px; font-variant-numeric:tabular-nums; }
+td { padding:5px 0; border-bottom:1px solid #262626; color:#b5b5b5; }
+td:last-child { text-align:right; color:#eee; max-width:58%; word-break:break-word; }
+tr:last-child td { border-bottom:0; }
+.ok { color:#4ade80; } .warn { color:#fbbf24; } .err { color:#f87171; }
+.note { font-size:12px; color:#7a7a7a; line-height:1.55; }
+</style>
+</head>
+<body>
+<h1>Nivel del eje óptico — Visor pirotécnico</h1>
+
+<button id="go">Activar sensores</button>
+
+<div class="card">
+  <div class="lab">Inclinación del eje óptico (cabeceo)</div>
+  <div><span class="big" id="pitch">—</span><span class="unit">°</span></div>
+  <div class="sub" id="stab">sin lecturas todavía</div>
+</div>
+
+<div class="row">
+  <div class="card"><div class="lab">Balanceo</div><div class="mid" id="roll">—</div></div>
+  <div class="card"><div class="lab">Dispersión 1 s</div><div class="mid" id="sd">—</div></div>
+</div>
+
+<button class="sec" id="hold" style="margin-top:12px">Congelar lectura</button>
+<button class="sec" id="flip">Invertir signo</button>
+
+<div class="card">
+  <div class="lab">Diagnóstico</div>
+  <table>
+    <tr><td>Fuente en uso</td><td id="src" class="warn">ninguna</td></tr>
+    <tr><td>Página de primer nivel</td><td id="top">—</td></tr>
+    <tr><td>Conexión segura</td><td id="sec">—</td></tr>
+    <tr><td>DeviceOrientation</td><td id="hasDO">—</td></tr>
+    <tr><td>Pide permiso (iOS)</td><td id="needPerm">—</td></tr>
+    <tr><td>Generic Sensor API</td><td id="hasGS">—</td></tr>
+    <tr><td>Eventos orientation</td><td id="nDO">0</td></tr>
+    <tr><td>Eventos motion</td><td id="nDM">0</td></tr>
+    <tr><td>Muestras sensor</td><td id="nGS">0</td></tr>
+    <tr><td>Último error</td><td id="err" class="err">—</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <div class="lab">Valores crudos</div>
+  <table>
+    <tr><td>beta / gamma / alpha</td><td id="bga">—</td></tr>
+    <tr><td>gravedad x / y / z</td><td id="grav">—</td></tr>
+    <tr><td>módulo</td><td id="gmod">—</td></tr>
+    <tr><td>navegador</td><td id="ua">—</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <div class="lab">Comprobación del signo</div>
+  <div class="note">
+    Tumbado boca arriba: debe marcar <b>−90°</b>.<br>
+    De pie, cámara al frente: debe marcar <b>0°</b>.<br>
+    Si sale al revés, pulsa «Invertir signo».
+  </div>
+</div>
+
+<script>
+var E = function(i){ return document.getElementById(i); };
+var buf = [], frozen = false, sign = 1, rollv = null;
+var nDO = 0, nDM = 0, nGS = 0, src = 'ninguna';
+
+function fmt(v,d){ return (v===null||v===undefined||isNaN(v)) ? '—' : Number(v).toFixed(d===undefined?1:d); }
+function setErr(m){ E('err').textContent = m; }
+
+E('top').textContent = (window.self === window.top) ? 'sí' : 'NO — ábrela fuera de la app';
+E('top').className = (window.self === window.top) ? 'ok' : 'err';
+E('sec').textContent = window.isSecureContext ? 'sí' : 'NO';
+E('sec').className = window.isSecureContext ? 'ok' : 'err';
+E('hasDO').textContent = (typeof DeviceOrientationEvent !== 'undefined') ? 'sí' : 'no';
+E('needPerm').textContent = (typeof DeviceOrientationEvent !== 'undefined' &&
+  typeof DeviceOrientationEvent.requestPermission === 'function') ? 'sí' : 'no';
+E('hasGS').textContent = ('GravitySensor' in window) ? 'GravitySensor' :
+  ('Accelerometer' in window) ? 'Accelerometer' : 'no';
+E('ua').textContent = navigator.userAgent.slice(0, 90);
+
+function publish(pitch, roll){
+  if (frozen) return;
+  var now = Date.now();
+  buf.push([now, pitch]);
+  while (buf.length && now - buf[0][0] > 1000) buf.shift();
+  var v = buf.map(function(x){ return x[1]; });
+  var m = v.reduce(function(s,x){ return s+x; },0)/v.length;
+  var sd = Math.sqrt(v.reduce(function(s,x){ return s+(x-m)*(x-m); },0)/v.length);
+  E('pitch').textContent = fmt(m,2);
+  E('roll').textContent = fmt(roll,2) + '°';
+  E('sd').textContent = '±' + fmt(sd,2) + '°';
+  var el = E('stab');
+  if (sd < 0.15){ el.className='sub ok'; el.textContent='estable · '+v.length+' muestras'; }
+  else if (sd < 0.5){ el.className='sub warn'; el.textContent='algo de movimiento · '+v.length+' muestras'; }
+  else { el.className='sub err'; el.textContent='inestable · '+v.length+' muestras'; }
+}
+
+function fromGravity(gx, gy, gz, tag){
+  var mod = Math.sqrt(gx*gx + gy*gy + gz*gz);
+  E('grav').textContent = fmt(gx,2)+' / '+fmt(gy,2)+' / '+fmt(gz,2);
+  E('gmod').textContent = fmt(mod,2);
+  if (!mod) return;
+  var elev = Math.asin(Math.max(-1, Math.min(1, -gz/mod))) * 180/Math.PI;
+  var roll = Math.atan2(gx, gy) * 180/Math.PI;
+  if (src !== tag){ src = tag; E('src').textContent = tag; E('src').className = 'ok'; }
+  publish(sign*elev, roll);
+}
+
+function onOri(e){
+  nDO++; E('nDO').textContent = nDO;
+  E('bga').textContent = fmt(e.beta,2)+' / '+fmt(e.gamma,2)+' / '+fmt(e.alpha,1);
+  if (e.beta === null || src === 'GravitySensor' || src === 'Accelerometer' || src === 'devicemotion') return;
+  if (src !== 'deviceorientation'){ src='deviceorientation'; E('src').textContent=src; E('src').className='ok'; }
+  publish(sign*(e.beta - 90), e.gamma);
+}
+
+function onMot(e){
+  nDM++; E('nDM').textContent = nDM;
+  var g = e.accelerationIncludingGravity;
+  if (!g || g.x === null) return;
+  if (src === 'GravitySensor' || src === 'Accelerometer') {
+    E('grav').textContent = fmt(g.x,2)+' / '+fmt(g.y,2)+' / '+fmt(g.z,2);
+    return;
+  }
+  fromGravity(g.x, g.y, g.z, 'devicemotion');
+}
+
+function startGS(){
+  var C = window.GravitySensor || window.Accelerometer;
+  if (!C) return false;
+  try {
+    var s = new C({ frequency: 50 });
+    s.addEventListener('reading', function(){
+      nGS++; E('nGS').textContent = nGS;
+      fromGravity(s.x, s.y, s.z, (window.GravitySensor ? 'GravitySensor' : 'Accelerometer'));
+    });
+    s.addEventListener('error', function(ev){ setErr('sensor: ' + (ev.error && ev.error.name)); });
+    s.start();
+    return true;
+  } catch(err){ setErr('sensor: ' + err.message); return false; }
+}
+
+function attach(){
+  window.addEventListener('deviceorientation', onOri);
+  window.addEventListener('deviceorientationabsolute', onOri);
+  window.addEventListener('devicemotion', onMot);
+}
+
+attach();
+startGS();
+
+E('hold').onclick = function(){
+  frozen = !frozen;
+  this.textContent = frozen ? 'Reanudar' : 'Congelar lectura';
+  this.style.background = frozen ? '#8a5a00' : '#2e2e2e';
+};
+E('flip').onclick = function(){
+  sign = -sign;
+  this.textContent = sign === 1 ? 'Invertir signo' : 'Signo invertido';
+  this.style.background = sign === 1 ? '#2e2e2e' : '#8a5a00';
+};
+
+E('go').onclick = function(){
+  var btn = this;
+  function done(){
+    attach(); startGS();
+    btn.textContent = 'Sensores activos';
+    btn.style.background = '#1d6b3f';
+  }
+  try {
+    if (typeof DeviceOrientationEvent !== 'undefined' &&
+        typeof DeviceOrientationEvent.requestPermission === 'function') {
+      DeviceOrientationEvent.requestPermission().then(function(r){
+        if (r !== 'granted'){ setErr('permiso orientation: ' + r); }
+        if (typeof DeviceMotionEvent !== 'undefined' &&
+            typeof DeviceMotionEvent.requestPermission === 'function') {
+          return DeviceMotionEvent.requestPermission().catch(function(e){ setErr('permiso motion: '+e.message); });
+        }
+      }).catch(function(e){ setErr('requestPermission: ' + e.message); }).then(done);
+    } else { done(); }
+  } catch(err){ setErr('activar: ' + err.message); done(); }
+};
+</script>
+</body>
+</html>
