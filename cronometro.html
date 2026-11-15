@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Verificación de cronómetros contra UTC</title>
+<style>
+:root{--bg:#0d1117;--panel:#161b22;--line:#30363d;--txt:#e6edf3;--dim:#8b949e;
+  --acc:#4493f8;--ok:#3fb950;--warn:#d29922;--bad:#f85149;--org:#ff7b40}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--bg);color:var(--txt);padding:0 0 40px;
+  font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:760px;margin:0 auto;padding:0 12px}
+header{background:var(--panel);border-bottom:1px solid var(--line);padding:12px 0;margin-bottom:12px}
+h1{margin:0;font-size:16px;font-weight:600}
+h2{margin:22px 0 6px;font-size:11.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim);font-weight:600}
+
+#reloj{background:#000;border:1px solid var(--line);border-radius:10px;padding:16px 10px;text-align:center;margin:10px 0}
+#utc{font:700 clamp(30px,10.5vw,54px)/1 ui-monospace,monospace;letter-spacing:.01em}
+#fecha{font:600 14px ui-monospace,monospace;color:var(--dim);margin-top:6px}
+#estado{font-size:12px;margin-top:9px;color:var(--dim)}
+
+.row{display:flex;gap:8px;align-items:center;margin:7px 0}
+.row>label{flex:0 0 150px;color:var(--dim);font-size:12.5px}
+input,select,textarea{flex:1 1 auto;min-width:0;background:#0d1117;color:var(--txt);
+  border:1px solid var(--line);border-radius:6px;padding:8px 9px;font:14px ui-monospace,monospace}
+textarea{font-size:12.5px;line-height:1.45;width:100%;min-height:230px}
+.u{flex:0 0 auto;color:var(--dim);font-size:12px;width:52px}
+button{background:#21262d;color:var(--txt);border:1px solid var(--line);border-radius:7px;
+  padding:10px 13px;font-size:13.5px;font-weight:500}
+button:active{background:#30363d}
+button.p{background:var(--acc);border-color:var(--acc);color:#fff}
+button.g{background:var(--ok);border-color:var(--ok);color:#06240f}
+button.o{background:var(--org);border-color:var(--org);color:#1a1000}
+.btns{display:flex;gap:8px;margin:9px 0;flex-wrap:wrap}
+.btns>button{flex:1 1 130px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:12px;margin:9px 0}
+.kv{display:flex;justify-content:space-between;gap:10px;font-size:12.5px;padding:3px 0;color:var(--dim)}
+.kv b{color:var(--txt);font-family:ui-monospace,monospace;font-weight:600;text-align:right}
+.big{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin:4px 0}
+.big b{font:700 26px/1.1 ui-monospace,monospace}
+.big s{text-decoration:none;color:var(--dim);font-size:12px}
+.verdict{margin-top:10px;padding:9px 11px;border-radius:6px;font-weight:600;font-size:13px;text-align:center}
+.v-ok{background:rgba(63,185,80,.16);color:var(--ok);border:1px solid rgba(63,185,80,.4)}
+.v-no{background:rgba(248,81,73,.16);color:var(--bad);border:1px solid rgba(248,81,73,.4)}
+.v-na{background:rgba(210,153,34,.14);color:var(--warn);border:1px solid rgba(210,153,34,.38)}
+.note{color:var(--dim);font-size:11.5px;line-height:1.55;margin:8px 0}
+.err{color:var(--bad);font-size:12px;margin:6px 0}
+table{width:100%;border-collapse:collapse;font-size:12.5px;margin:6px 0}
+th,td{text-align:right;padding:5px 4px;border-bottom:1px solid var(--line)}
+th{color:var(--dim);font-weight:500;font-size:11px}
+td:first-child,th:first-child{text-align:left}
+a{color:var(--acc)}
+.seg{display:flex;border:1px solid var(--line);border-radius:7px;overflow:hidden;margin:8px 0}
+.seg button{flex:1;border:none;border-radius:0;font-size:12.5px;padding:9px 4px;background:#0d1117;color:var(--dim)}
+.seg button.on{background:var(--acc);color:#fff}
+.hide{display:none}
+</style>
+</head>
+<body>
+<header><div class="wrap"><h1>Verificación de cronómetros contra UTC</h1></div></header>
+<div class="wrap">
+
+<div id="reloj">
+  <div id="utc">--:--:--.---</div>
+  <div id="fecha">—</div>
+  <div id="estado">Sin sincronizar</div>
+</div>
+<div class="btns">
+  <button class="p" id="bSync">Sincronizar con UTC</button>
+  <button id="bTec">Detalle técnico</button>
+</div>
+<div id="syncDet" class="hide"></div>
+
+<div id="app"></div>
+</div>
+
+<script>
+"use strict";
+const $=s=>document.querySelector(s);
+const fmt=(v,n=2)=>(v===null||v===undefined||!isFinite(v))?"—":v.toFixed(n).replace(".",",");
+const T0 = Date.now() - performance.now();        // ancla reloj monótono → reloj de pared
+
+/* ------------------------------------------------------------------ estado */
+const D = Object.assign({
+  equipo:"", modelo:"", serie:"", resol:0.01,
+  metodo:"foto",            // foto | manual
+  crit:1.0,                 // criterio, s/día
+  tur:5,
+  uLectura:null,            // si null, se deduce del método
+  ini:null,                 // {utc, cron, u, fuente, rtt}
+  fin:null,
+  operador:"", obs:"",
+  func:{bateria:false, display:false, pulsadores:false, cero:false}
+}, JSON.parse(localStorage.getItem("cron.d")||"{}"));
+const guarda=()=>localStorage.setItem("cron.d",JSON.stringify(D));
+
+const SYNC={off:null,u:null,fuente:null,rtt:null,n:0,log:[],err:""};
+let tecnico=false;
+
+/* -------------------------------------------------------------- fuentes UTC */
+const FUENTES=[
+  {n:"timeapi.io",      url:"https://timeapi.io/api/Time/current/zone?timeZone=UTC",
+   lee:j=>Date.parse((j.dateTime||"").replace(/Z?$/,"")+"Z")},
+  {n:"worldtimeapi.org",url:"https://worldtimeapi.org/api/timezone/Etc/UTC",
+   lee:j=>Date.parse(j.utc_datetime)},
+  {n:"hourora.app",     url:"https://hourora.app/api/v1/time?timezone=UTC",
+   lee:j=>Date.parse(j.utc)}
+];
+
+/* Intercambio al estilo NTP: con T1 el envío y T4 la recepción medidos en el
+   reloj monótono local, y Ts la marca del servidor, el desfase es
+   Ts − (T1+T4)/2. El error de esa estimación está acotado por la mitad del
+   tiempo de ida y vuelta, que es lo que se toma como incertidumbre típica:
+   es una cota conservadora, porque supone el peor reparto posible del
+   camino entre ida y vuelta. */
+async function sondea(f){
+  const t1=performance.now();
+  const r=await fetch(f.url,{cache:"no-store",mode:"cors"});
+  const t4=performance.now();
+  if(!r.ok) throw new Error(f.n+": HTTP "+r.status);
+  const Ts=f.lee(await r.json());
+  if(!isFinite(Ts)) throw new Error(f.n+": respuesta sin fecha legible");
+  return {off: Ts-(T0+(t1+t4)/2), rtt: t4-t1, fuente:f.n};
+}
+/* Respaldo sin depender de ninguna API: la cabecera Date es legible entre
+   orígenes sin permiso especial, pero tiene resolución de 1 s. Se detecta el
+   instante en que cambia de segundo sondeando deprisa, lo que acota el salto
+   al intervalo de sondeo más el tiempo de ida y vuelta. */
+async function sondeaCabecera(url, intentos=60){
+  let prev=null, prevT=null;
+  for(let i=0;i<intentos;i++){
+    const t1=performance.now();
+    const r=await fetch(url,{method:"HEAD",cache:"no-store"});
+    const t4=performance.now();
+    const d=r.headers.get("date");
+    if(!d) throw new Error("el servidor no expone la cabecera Date");
+    const v=Date.parse(d);
+    if(prev!==null && v>prev){
+      const centro=(prevT+t4)/2;                 // el borde está entre ambos
+      return {off: v-(T0+centro), rtt: t4-prevT, fuente:"cabecera Date de "+new URL(url).host};
+    }
+    prev=v; prevT=t1;
+    await new Promise(s=>setTimeout(s,40));
+  }
+  throw new Error("no se observó el cambio de segundo");
+}
+
+async function sincroniza(){
+  SYNC.err=""; SYNC.log=[]; pinta();
+  const buenos=[];
+  for(const f of FUENTES){
+    for(let k=0;k<4;k++){
+      try{ const s=await sondea(f); buenos.push(s); SYNC.log.push(f.n+": ida y vuelta "+fmt(s.rtt,0)+" ms"); }
+      catch(e){ SYNC.log.push("✗ "+e.message); break; }
+    }
+    if(buenos.length>=4) break;
+  }
+  if(!buenos.length){
+    try{
+      const s=await sondeaCabecera(location.href);
+      buenos.push(s); SYNC.log.push("respaldo por cabecera Date, ventana "+fmt(s.rtt,0)+" ms");
+    }catch(e){ SYNC.err="No se pudo obtener UTC: "+e.message; pinta(); return; }
+  }
+  buenos.sort((a,b)=>a.rtt-b.rtt);
+  const m=buenos[0];
+  SYNC.off=m.off; SYNC.u=m.rtt/2; SYNC.fuente=m.fuente; SYNC.rtt=m.rtt; SYNC.n=buenos.length;
+  pinta();
+}
+const utcAhora = () => SYNC.off===null ? null : T0+performance.now()+SYNC.off;
+function hms(ms){
+  if(ms===null) return {h:"--:--:--.---",f:"—"};
+  const d=new Date(ms), p=(x,n=2)=>String(x).padStart(n,"0");
+  return {h:p(d.getUTCHours())+":"+p(d.getUTCMinutes())+":"+p(d.getUTCSeconds())+"."+p(d.getUTCMilliseconds(),3),
+          f:d.getUTCFullYear()+"-"+p(d.getUTCMonth()+1)+"-"+p(d.getUTCDate())+" UTC"};
+}
+function tic(){
+  const t=utcAhora(), o=hms(t);
+  $("#utc").textContent=o.h; $("#fecha").textContent=o.f;
+  $("#utc").style.color = t===null?"var(--dim)":"var(--txt)";
+  requestAnimationFrame(tic);
+}
+
+/* ------------------------------------------------------------ incertidumbre */
+/* u del marcado de cada extremo, según cómo se lean cronómetro y UTC:
+   - foto: ambos displays en la misma imagen, el tiempo de reacción desaparece
+     y solo queda la resolución de lectura.
+   - manual: se pulsa mirando la pantalla, y manda el tiempo de reacción. */
+function uLect(){
+  if (D.uLectura!==null && D.uLectura!=="" && isFinite(+D.uLectura)) return +D.uLectura;
+  return D.metodo==="foto" ? Math.max(0.02, (+D.resol||0.01)/Math.sqrt(12)*2 + 0.015) : 0.20;
+}
+function resultado(){
+  if(!D.ini||!D.fin) return null;
+  const dT=(D.fin.utc-D.ini.utc)/1000;                 // intervalo de referencia, s
+  const dS=(+D.fin.cron)-(+D.ini.cron);                // intervalo del cronómetro, s
+  if(!isFinite(dT)||!isFinite(dS)||dT<=0) return null;
+  const err=dS-dT;                                      // adelanto (+) o atraso (−), s
+  const rel=err/dT, sdia=rel*86400, ppm=rel*1e6;
+  const uL=uLect();
+  const uRef=Math.hypot((D.ini.u||0)/1000,(D.fin.u||0)/1000);
+  const uS=Math.hypot(uL,uL);
+  const uc=Math.hypot(uRef,uS), U=2*uc;
+  const Urel=U/dT, Usdia=Urel*86400;
+  const lim=+D.crit;
+  const tur = Usdia>0 ? lim/Usdia : null;
+  return {dT,dS,err,rel,sdia,ppm,uRef,uS,uL,uc,U,Urel,Usdia,lim,tur,
+          apto: Math.abs(sdia)+Usdia<=lim, dudoso: Math.abs(sdia)-Usdia<lim && Math.abs(sdia)+Usdia>lim};
+}
+/* Duración mínima para que la verificación discrimine el criterio con la
+   relación TUR pedida: U(tasa) ≤ criterio/TUR, con U = 2·u_c/ΔT. */
+function duracionMin(crit=+D.crit, tur=+D.tur, m=D.metodo){
+  const uL = m==="foto" ? uLect() : 0.20;
+  const uc = Math.hypot(Math.hypot(0.02,0.02), Math.hypot(uL,uL));
+  return 2*uc*tur*86400/crit;      // segundos
+}
+const dur=s=>{ if(!isFinite(s))return "—"; const h=Math.floor(s/3600), m=Math.round((s-h*3600)/60);
+  return h?(h+" h "+(m?m+" min":"")):(m+" min"); };
+
+/* -------------------------------------------------------------------- vista */
+function pinta(){
+  // cabecera de sincronización
+  const e=$("#estado");
+  if(SYNC.err) e.innerHTML='<span style="color:var(--bad)">'+SYNC.err+'</span>';
+  else if(SYNC.off===null) e.textContent="Sin sincronizar — pulsa «Sincronizar con UTC»";
+  else e.innerHTML='Fuente: <b>'+SYNC.fuente+'</b> · incertidumbre ±'+fmt(SYNC.u,0)+' ms · ida y vuelta '+fmt(SYNC.rtt,0)+' ms';
+  $("#syncDet").className = tecnico?"":"hide";
+  $("#syncDet").innerHTML = tecnico? `<div class="card"><div class="note" style="margin:0">
+    <b>Cómo se obtiene el UTC.</b> Se marca el envío y la recepción con el reloj monótono del navegador y se toma
+    la marca del servidor: el desfase es la marca del servidor menos el punto medio del intercambio. El error de esa
+    estimación está acotado por la mitad del tiempo de ida y vuelta, que es lo que se declara como incertidumbre;
+    es una cota conservadora, porque supone el peor reparto posible del camino entre ida y vuelta. Se lanzan varios
+    sondeos y se conserva el de menor ida y vuelta.
+    <br><br><b>Esto no es trazabilidad.</b> Es una comparación contra un servicio horario público con incertidumbre
+    declarada, válida como verificación interna. Un certificado de calibración trazable a un patrón nacional
+    solo lo emite un laboratorio acreditado.
+    <br><br>Registro del último sondeo:<br>${SYNC.log.map(x=>"· "+x).join("<br>")||"—"}</div></div>`:"";
+
+  const R=resultado();
+  let h="";
+
+  /* --- equipo --- */
+  h+=`<h2>Equipo verificado</h2>
+  <div class="row"><label>Identificación</label><input id="fEq" value="${(D.equipo||"").replace(/"/g,"&quot;")}" placeholder="p. ej. CRON-03"></div>
+  <div class="row"><label>Marca y modelo</label><input id="fMod" value="${(D.modelo||"").replace(/"/g,"&quot;")}"></div>
+  <div class="row"><label>Número de serie</label><input id="fSer" value="${(D.serie||"").replace(/"/g,"&quot;")}"></div>
+  <div class="row"><label>Resolución del display</label><input type="number" step="0.001" id="fRes" value="${D.resol}"><span class="u">s</span></div>
+
+  <h2>Método de lectura</h2>
+  <div class="seg">
+    <button class="${D.metodo==="foto"?"on":""}" id="mFoto">Fotográfico</button>
+    <button class="${D.metodo==="manual"?"on":""}" id="mMan">Pulsación manual</button>
+  </div>
+  <div class="note">${D.metodo==="foto"
+    ? "Se fotografían <b>a la vez</b> el display del cronómetro y el reloj UTC de esta pantalla, al principio y al final. Como ambas lecturas salen del mismo instante, <b>el tiempo de reacción desaparece</b> y solo queda la resolución de lectura. Es el método recomendado. Para verificar el cronómetro del propio móvil, usa pantalla dividida y haz captura, o fotografía con un segundo aparato."
+    : "Se arranca y se para el cronómetro mirando esta pantalla. Es más cómodo, pero <b>el tiempo de reacción manda</b> y multiplica por unas cinco la duración necesaria."}</div>
+  <div class="row"><label>Error de lectura</label><input type="number" step="0.01" id="fUL"
+    value="${D.uLectura??""}" placeholder="automático: ${fmt(uLect(),3)}"><span class="u">s</span></div>
+
+  <h2>Criterio de aceptación</h2>
+  <div class="row"><label>Desviación admisible</label><input type="number" step="0.1" id="fCrit" value="${D.crit}"><span class="u">s/día</span></div>
+  <div class="row"><label>Relación TUR exigida</label><input type="number" step="1" id="fTur" value="${D.tur}"><span class="u">: 1</span></div>
+  <div class="card">
+    <div class="kv"><span>criterio en relativo</span><b>${fmt(D.crit/86400*1e6,2)} ppm</b></div>
+    <div class="kv"><span>duración mínima del ensayo</span><b>${dur(duracionMin())}</b></div>
+  </div>
+  <div class="note"><b>De dónde sale el criterio.</b> No puede deducirse de lo que mides: con tiempos de combustión
+  y retardos de segundos, un cronómetro con una deriva pésima de 8,6 s/día aporta 1 ms en una medida de 10 s, mientras
+  que el tiempo de reacción del operador aporta unos 200 ms. Aplicando TUR 5:1 a tus medidas, el límite saldría
+  absurdamente laxo. Por eso el valor por defecto, <b>±1 s/día (11,6 ppm)</b>, se fija por otra vía: queda dentro de
+  la banda típica de especificación de un cuarzo, de 5 a 30 ppm, así que detecta un equipo degradado en lugar de
+  sellar cualquier cosa, y es verificable en una noche. <b>Recomendación propia, no requisito normativo.</b>
+  <br><br>Corolario importante para el registro: un cronómetro que no cumpla este criterio <b>no invalida tus medidas
+  anteriores</b>, porque su deriva nunca fue una contribución significativa. La verificación acredita que el
+  instrumento está sano, no que las medidas lo fueran.</div>
+
+  <h2>Comprobación funcional</h2>
+  <div class="note">Son los fallos que de verdad estropean una medida, y ninguno se detecta midiendo la deriva.</div>
+  ${[["bateria","Batería con carga suficiente, sin aviso de nivel bajo"],
+     ["display","Todos los segmentos del display encienden y se leen"],
+     ["pulsadores","Arranque, parada y parciales responden a la primera"],
+     ["cero","Puesta a cero correcta y el conteo no se detiene solo"]]
+   .map(([k,t])=>`<div class="row" style="align-items:flex-start">
+     <input type="checkbox" class="fk" data-k="${k}" ${D.func[k]?"checked":""}
+       style="flex:0 0 auto;width:19px;height:19px;margin-top:2px">
+     <label style="flex:1 1 auto;color:var(--txt);font-size:13px">${t}</label></div>`).join("")}
+
+  /* --- extremos --- */
+  <h2>Inicio del ensayo</h2>${extremo("ini")}
+  <h2>Fin del ensayo</h2>${extremo("fin")}`;
+
+  /* --- resultado --- */
+  h+=`<h2>Resultado</h2>`;
+  if(!R) h+=`<div class="card"><div class="note" style="margin:0">Registra los dos extremos para obtener la desviación.</div></div>`;
+  else{
+    const cls = R.dudoso?"v-na":(R.apto?"v-ok":"v-no");
+    const txt = R.dudoso
+      ? "No concluyente: la incertidumbre se solapa con el límite. Alarga el ensayo."
+      : (R.apto?"APTO · dentro del criterio con la incertidumbre incluida"
+               :"NO APTO · fuera del criterio con la incertidumbre incluida");
+    h+=`<div class="card">
+      <div class="big"><s>Desviación de marcha</s><b style="color:${R.sdia>=0?"var(--warn)":"var(--acc)"}">${R.sdia>=0?"+":""}${fmt(R.sdia,3)} s/día</b></div>
+      <div class="big"><s>En relativo</s><b>${R.ppm>=0?"+":""}${fmt(R.ppm,2)} ppm</b></div>
+      <div class="big"><s>Incertidumbre U (k = 2)</s><b>± ${fmt(R.Usdia,3)} s/día</b></div>
+      <div class="kv"><span>duración del ensayo</span><b>${dur(R.dT)} (${fmt(R.dT,1)} s)</b></div>
+      <div class="kv"><span>diferencia acumulada</span><b>${R.err>=0?"+":""}${fmt(R.err,3)} s</b></div>
+      <div class="kv"><span>TUR conseguido</span><b>${fmt(R.tur,1)} : 1 ${R.tur>=D.tur?"✓":"✗ insuficiente"}</b></div>
+      <div class="verdict ${cls}">${txt}</div>
+    </div>`;
+    if(R.tur<D.tur) h+=`<div class="note" style="color:var(--warn)">El ensayo ha durado poco para el criterio
+      elegido: harían falta ${dur(duracionMin())} para alcanzar TUR ${D.tur}:1. El veredicto de arriba ya incluye
+      la incertidumbre, así que sigue siendo honesto, pero con menos poder de discriminación.</div>`;
+    if(tecnico) h+=`<h2>Presupuesto de incertidumbre</h2>
+      <table>
+        <tr><th>Contribución</th><th>u (s)</th><th>% de u<sub>c</sub></th></tr>
+        <tr><td>Referencia UTC, los dos extremos</td><td>${fmt(R.uRef,4)}</td><td>${fmt(100*R.uRef**2/R.uc**2,0)}</td></tr>
+        <tr><td>Lectura del cronómetro, los dos extremos</td><td>${fmt(R.uS,4)}</td><td>${fmt(100*R.uS**2/R.uc**2,0)}</td></tr>
+        <tr><td><b>u<sub>c</sub> combinada</b></td><td><b>${fmt(R.uc,4)}</b></td><td>100</td></tr>
+        <tr><td><b>U (k = 2)</b></td><td><b>${fmt(R.U,4)}</b></td><td>${fmt(R.Urel*1e6,2)} ppm</td></tr>
+      </table>
+      <div class="note">La deriva se obtiene como (ΔS − ΔT)/ΔT, siendo ΔT el intervalo de referencia entre las dos
+      sincronizaciones y ΔS el intervalo marcado por el cronómetro. Un desfase constante del reloj de referencia
+      se cancela: solo entra su incertidumbre en cada extremo, y por eso se sincroniza dos veces en vez de confiar
+      en el reloj del dispositivo durante horas.</div>`;
+  }
+
+  /* --- registro --- */
+  h+=`<h2>Registro de verificación</h2>
+  <div class="row"><label>Operador</label><input id="fOp" value="${(D.operador||"").replace(/"/g,"&quot;")}"></div>
+  <div class="row"><label>Observaciones</label><input id="fObs" value="${(D.obs||"").replace(/"/g,"&quot;")}"></div>
+  <div class="btns">
+    <button class="g" id="bReg">Generar registro</button>
+    <button id="bCopia">Copiar</button>
+    <button id="bDesc">Descargar</button>
+    <button id="bNuevo">Nueva verificación</button>
+  </div>
+  <textarea id="salida" readonly placeholder="Pulsa «Generar registro»"></textarea>
+  <div class="note">Herramienta de verificación interna. No sustituye a un certificado de calibración trazable,
+  que solo emite un laboratorio acreditado. <a href="index.html">Visor pirotécnico digital</a></div>`;
+
+  $("#app").innerHTML=h;
+  enlaza();
+}
+
+function extremo(k){
+  const e=D[k], t=utcAhora();
+  const etq = k==="ini"?"inicio":"fin";
+  return `<div class="card">
+    ${e?`<div class="kv"><span>UTC registrado</span><b>${hms(e.utc).f.replace(" UTC","")} ${hms(e.utc).h}</b></div>
+         <div class="kv"><span>incertidumbre de la referencia</span><b>± ${fmt(e.u,0)} ms</b></div>
+         <div class="kv"><span>fuente</span><b>${e.fuente||"—"}</b></div>`
+        :`<div class="note" style="margin:0 0 8px">Sin registrar.</div>`}
+    <div class="row"><label>Lectura del cronómetro</label>
+      <input type="number" step="0.001" class="fc" data-k="${k}" value="${e?e.cron:""}" placeholder="segundos totales"><span class="u">s</span></div>
+    <div class="row"><label>UTC a mano</label>
+      <input type="text" class="fu" data-k="${k}" value="" placeholder="2026-11-15T21:30:00.000Z"></div>
+    <div class="btns">
+      <button class="${k==="ini"?"o":"p"} bcap" data-k="${k}" ${t===null?"disabled":""}>Capturar UTC de ${etq} ahora</button>
+      <button class="bman" data-k="${k}">Usar el UTC tecleado</button>
+      ${e?`<button class="bdel" data-k="${k}">Borrar</button>`:""}
+    </div>
+    <div class="note" style="margin:0">${D.metodo==="foto"
+      ? "Fotografía el cronómetro junto a esta pantalla, y después teclea aquí las dos lecturas que veas en la foto: el UTC en el campo de texto y el cronómetro arriba."
+      : "Pulsa el cronómetro y el botón de capturar a la vez, y anota la lectura del cronómetro."}</div>
+  </div>`;
+}
+
+/* ------------------------------------------------------------ vinculaciones */
+function enlaza(){
+  const on=(id,ev,fn)=>{const x=$("#"+id); if(x) x.addEventListener(ev,fn);};
+  const txt=(id,k)=>on(id,"input",e=>{D[k]=e.target.value; guarda();});
+  const num=(id,k)=>on(id,"change",e=>{D[k]=e.target.value===""?null:+e.target.value; guarda(); pinta();});
+
+  txt("fEq","equipo"); txt("fMod","modelo"); txt("fSer","serie");
+  txt("fOp","operador"); txt("fObs","obs");
+  num("fRes","resol"); num("fCrit","crit"); num("fTur","tur"); num("fUL","uLectura");
+  on("mFoto","click",()=>{D.metodo="foto"; guarda(); pinta();});
+  on("mMan","click",()=>{D.metodo="manual"; guarda(); pinta();});
+
+  document.querySelectorAll(".fk").forEach(x=>x.addEventListener("change",e=>{
+    D.func[e.target.dataset.k]=e.target.checked; guarda();}));
+  document.querySelectorAll(".fc").forEach(x=>x.addEventListener("change",e=>{
+    const k=e.target.dataset.k;
+    if(!D[k]) D[k]={utc:null,u:null,fuente:null};
+    D[k].cron = e.target.value===""?null:+e.target.value; guarda(); pinta();}));
+
+  document.querySelectorAll(".bcap").forEach(b=>b.addEventListener("click",e=>{
+    const k=e.target.dataset.k, t=utcAhora(); if(t===null) return;
+    D[k]=Object.assign({},D[k],{utc:t,u:SYNC.u,fuente:SYNC.fuente}); guarda(); pinta();}));
+  document.querySelectorAll(".bman").forEach(b=>b.addEventListener("click",e=>{
+    const k=e.target.dataset.k;
+    const campo=document.querySelector('.fu[data-k="'+k+'"]');
+    const v=Date.parse(campo.value);
+    if(!isFinite(v)){ alert("Fecha no reconocida. Usa el formato 2026-11-15T21:30:00.000Z"); return; }
+    D[k]=Object.assign({},D[k],{utc:v,u:SYNC.u??50,fuente:(SYNC.fuente||"tecleado")+" (leído de foto)"});
+    guarda(); pinta();}));
+  document.querySelectorAll(".bdel").forEach(b=>b.addEventListener("click",e=>{
+    D[e.target.dataset.k]=null; guarda(); pinta();}));
+
+  on("bReg","click",()=>{$("#salida").value=registro();});
+  on("bCopia","click",()=>{const s=$("#salida"); if(!s.value) s.value=registro();
+    navigator.clipboard?.writeText(s.value); s.select();});
+  on("bDesc","click",()=>{
+    const s=$("#salida").value||registro();
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(new Blob([s],{type:"text/markdown;charset=utf-8"}));
+    a.download="verificacion-cronometro-"+(D.equipo||"sin-id").replace(/\W+/g,"-")+"-"+
+      new Date().toISOString().slice(0,10)+".md";
+    a.click(); URL.revokeObjectURL(a.href);});
+  on("bNuevo","click",()=>{
+    if(!confirm("¿Empezar una verificación nueva? Se borran los dos extremos y las observaciones.\n\nSe conservan equipo, criterio y método.")) return;
+    D.ini=null; D.fin=null; D.obs="";
+    D.func={bateria:false,display:false,pulsadores:false,cero:false};
+    guarda(); $("#salida").value=""; pinta();});
+}
+
+/* -------------------------------------------------------------- el registro */
+function registro(){
+  const R=resultado(), iso=t=>t?new Date(t).toISOString():"—";
+  const si=b=>b?"sí":"NO";
+  const L=[];
+  L.push("# Registro de verificación de cronómetro","",
+    "| | |","|---|---|",
+    "| Fecha del registro | "+new Date().toISOString().slice(0,19).replace("T"," ")+" UTC |",
+    "| Equipo | "+(D.equipo||"—")+" |",
+    "| Marca y modelo | "+(D.modelo||"—")+" |",
+    "| Número de serie | "+(D.serie||"—")+" |",
+    "| Resolución del display | "+fmt(D.resol,3)+" s |",
+    "| Operador | "+(D.operador||"—")+" |","",
+    "## Método","",
+    "Comparación directa de intervalo contra referencia UTC obtenida por servicio horario en red.",
+    "Lectura de los extremos: "+(D.metodo==="foto"
+      ? "fotográfica simultánea del display del cronómetro y del reloj UTC, lo que elimina el tiempo de reacción del operador."
+      : "pulsación manual contra el reloj UTC en pantalla, con el tiempo de reacción del operador como contribución dominante."),
+    "","La desviación se obtiene como (ΔS − ΔT)/ΔT, siendo ΔT el intervalo entre las dos sincronizaciones con la",
+    "referencia y ΔS el intervalo marcado por el cronómetro. Un desfase constante de la referencia se cancela; por",
+    "eso se sincroniza en ambos extremos y no se confía en el reloj del dispositivo durante el ensayo.","",
+    "## Datos","",
+    "| | Inicio | Fin |","|---|---|---|",
+    "| UTC de referencia | "+iso(D.ini?.utc)+" | "+iso(D.fin?.utc)+" |",
+    "| Incertidumbre de la referencia | "+(D.ini?"± "+fmt(D.ini.u,0)+" ms":"—")+" | "+(D.fin?"± "+fmt(D.fin.u,0)+" ms":"—")+" |",
+    "| Fuente horaria | "+(D.ini?.fuente||"—")+" | "+(D.fin?.fuente||"—")+" |",
+    "| Lectura del cronómetro | "+(D.ini?fmt(D.ini.cron,3)+" s":"—")+" | "+(D.fin?fmt(D.fin.cron,3)+" s":"—")+" |","");
+  if(R){
+    L.push("## Resultado","",
+      "| | |","|---|---|",
+      "| Intervalo de referencia ΔT | "+fmt(R.dT,3)+" s ("+dur(R.dT)+") |",
+      "| Intervalo del cronómetro ΔS | "+fmt(R.dS,3)+" s |",
+      "| Diferencia acumulada | "+(R.err>=0?"+":"")+fmt(R.err,3)+" s |",
+      "| **Desviación de marcha** | **"+(R.sdia>=0?"+":"")+fmt(R.sdia,3)+" s/día** ("+(R.ppm>=0?"+":"")+fmt(R.ppm,2)+" ppm) |",
+      "| Incertidumbre U (k = 2) | ± "+fmt(R.Usdia,3)+" s/día |",
+      "| Criterio de aceptación | ± "+fmt(D.crit,2)+" s/día |",
+      "| TUR exigido / conseguido | "+fmt(D.tur,0)+":1 / "+fmt(R.tur,1)+":1 |",
+      "| **Veredicto** | **"+(R.dudoso?"NO CONCLUYENTE":(R.apto?"APTO":"NO APTO"))+"** |","",
+      "### Presupuesto de incertidumbre","",
+      "| Contribución | u (s) |","|---|---|",
+      "| Referencia UTC, ambos extremos | "+fmt(R.uRef,4)+" |",
+      "| Lectura del cronómetro, ambos extremos | "+fmt(R.uS,4)+" |",
+      "| Combinada u_c | "+fmt(R.uc,4)+" |",
+      "| Ampliada U, k = 2 | "+fmt(R.U,4)+" |","");
+  }
+  L.push("## Comprobación funcional","",
+    "| Comprobación | Resultado |","|---|---|",
+    "| Batería con carga suficiente | "+si(D.func.bateria)+" |",
+    "| Segmentos del display legibles | "+si(D.func.display)+" |",
+    "| Pulsadores responden | "+si(D.func.pulsadores)+" |",
+    "| Puesta a cero y conteo continuo | "+si(D.func.cero)+" |","",
+    "## Observaciones","",(D.obs||"—"),"",
+    "## Alcance y limitaciones","",
+    "1. Verificación interna. **No es un certificado de calibración trazable a un patrón nacional**, que solo puede",
+    "   emitir un laboratorio acreditado.",
+    "2. La referencia UTC procede de un servicio horario público consultado por red. La incertidumbre declarada en",
+    "   cada extremo es la mitad del tiempo de ida y vuelta de la consulta, cota conservadora que supone el peor",
+    "   reparto posible del camino entre ida y vuelta.",
+    "3. El criterio de ±"+fmt(D.crit,2)+" s/día es un criterio interno, no un requisito normativo. Se fija dentro de la",
+    "   banda típica de especificación de un oscilador de cuarzo para que detecte un equipo degradado.",
+    "4. La deriva de marcha **no es una contribución significativa** a las medidas de tiempos de combustión, retardo",
+    "   y duración de efecto habituales, en las que domina el tiempo de reacción del operador. Un resultado NO APTO",
+    "   indica que el instrumento debe sustituirse o repararse, pero no invalida por sí solo medidas anteriores.","");
+  return L.join("\n");
+}
+
+$("#bSync").addEventListener("click",sincroniza);
+$("#bTec").addEventListener("click",()=>{tecnico=!tecnico; pinta();});
+pinta(); tic(); sincroniza();
+</script>
+</body>
+</html>
