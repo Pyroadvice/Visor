@@ -129,6 +129,12 @@ a{color:var(--acc)}
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 const fmt = (v,n=2) => (v===null||v===undefined||!isFinite(v)) ? "—" : v.toFixed(n).replace(".",",");
+/* Decimales según la magnitud. Con dos decimales fijos, una altura de 0,85 m
+   queda cuantificada en ±5 mm, que a corta distancia es mayor que la
+   repetibilidad real del instrumento: la pantalla escondía precisión que la
+   medida sí tenía. */
+const dec = v => Math.abs(v)<10 ? 3 : (Math.abs(v)<100 ? 2 : 1);
+const fmtH = v => fmt(v, dec(v));
 const COL = ["#4493f8","#3fb950","#d29922","#bc8cff","#39c5cf","#f778ba"];
 
 /* ---------------------------------------------------------------- estado */
@@ -1022,9 +1028,9 @@ function uiMedida(m){
             <input type="text" class="mLab" data-i="${i}" list="dlEtiq" value="${(q.lab||"").replace(/"/g,"&quot;")}"
                    placeholder="etiqueta" style="font:13px inherit"></td>
         ${T?`<td>${q.y===null?"—":fmt(q.y,1)}</td><td>${x&&x.dx!==null?fmt(x.dx,0):"—"}</td>`:""}
-        <td><b>${x?fmt(x.H,2):"—"}</b></td>
+        <td><b>${x?fmtH(x.H):"—"}</b></td>
         <td>${x?fmt(100*x.dr,2):"—"}</td>
-        <td style="color:${col}">${x?fmt(x.U,2):"—"}</td>
+        <td style="color:${col}">${x?fmtH(x.U):"—"}</td>
         <td><button class="mini mSel" data-i="${i}">sel.</button>
             ${S.marks.puntos.length>1?`<button class="mini mDel" data-i="${i}">×</button>`:""}</td>
       </tr>`;
@@ -1047,7 +1053,7 @@ function uiMedida(m){
         ?"cumple el criterio interno de 4 %":"por encima del objetivo interno de 4 %"}</div>`;
       if (hechos.length>1)
         h += `<div class="note">Entre marcas: ` +
-          hechos.slice(1).map((x,k)=>`${k+1}→${k+2} <b>${fmt(x.dH-hechos[k].dH,2)} m</b>`).join(" · ") + `</div>`;
+          hechos.slice(1).map((x,k)=>`${k+1}→${k+2} <b>${fmtH(x.dH-hechos[k].dH)} m</b>`).join(" · ") + `</div>`;
     }
   }
 
