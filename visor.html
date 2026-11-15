@@ -156,7 +156,7 @@ const S = {
   sel:-1,                 // -1 = origen ; 0..n-1 = índice de punto
   paso:"fino",            // fino | normal
   view:{s:1, tx:0, ty:0, fit:1},
-  calib:{ puntos:[], d:100, hCam:0, sensor:0, out:null, tipo:"phi" },
+  calib:{ puntos:[], d:100, hCam:0, sensor:0, out:null, tipo:"phi", camId:"" },
   reticula:false,
   liveErr:"",
   cams:[], camId: localStorage.getItem("vpd.camId")||"", capturas:[], capErr:"",
@@ -635,8 +635,9 @@ async function cargaImagen(file){
   try{ bmp = await createImageBitmap(file,{imageOrientation:"from-image"}); }
   catch(e){ bmp = await createImageBitmap(file); }
   S.src={kind:"img", el:bmp, w:bmp.width, h:bmp.height};
+  S.srcCamId="";                 // un archivo no viene de ninguna cámara de este aparato
   limpiaMarcas();
-  if (S.modo==="calib") S.calib.puntos.forEach(p=>p.y=null);
+  if (S.modo==="calib"){ S.calib.puntos.forEach(p=>p.y=null); S.calib.out=null; }
   encaja(); $("#hint").classList.add("hide"); pinta();
 }
 let vidRAF=0;
@@ -703,6 +704,7 @@ async function usaCaptura(id){
   /* Sin perfil para este objetivo, lo que hace falta es el ajuste óptico
      completo: «solo desalineación» no permite crear un perfil nuevo. */
   if(!S.perfiles.some(q=>q.camId && q.camId===c.camId)) S.calib.tipo="full";
+  S.calib.camId = c.camId||"";          // objetivo preseleccionado, y visible
   limpiaMarcas(); S.calib.puntos.forEach(p=>p.y=null); S.calib.out=null;
   encaja(); $("#hint").classList.add("hide"); pinta();
 }
@@ -1126,7 +1128,7 @@ function estadoCalib(){
   const fij=pts.filter(p=>p.y!==null && isFinite(+p.h)).length;
   const alt=pts.filter(p=>isFinite(+p.h)).length;
   const min=S.calib.tipo==="phi"?2:3;
-  const perfil=S.perfiles.find(q=>q.camId && q.camId===S.srcCamId);
+  const perfil=S.perfiles.find(q=>q.camId && S.calib.camId && q.camId===S.calib.camId);
   const geom=!!(+S.calib.d) && S.calib.hCam!=="" && S.calib.hCam!==null;
   return {fij, alt, min, nTot:pts.length, geom, perfil,
           ajuste: !!(S.calib.out && !S.calib.out.err),
@@ -1205,6 +1207,16 @@ function uiCalib(){
        : "Siguiente: pulsa <b>Ajustar</b>."}
     </div>
   </div>
+
+  <h3>Objetivo que se calibra</h3>
+  <div class="row"><label>Objetivo</label><select id="cCam">
+    <option value=""${S.calib.camId?"":" selected"}>— sin asociar (archivo externo) —</option>
+    ${S.cams.map((c,i)=>`<option value="${c.deviceId}"${c.deviceId===S.calib.camId?" selected":""}>${
+      nombreCam(c,i)}</option>`).join("")}
+  </select></div>
+  <div class="note">${S.cams.length
+    ? "El perfil que guardes quedará asociado a este objetivo y se activará solo al seleccionarlo en Directo. Si la imagen viene de una captura, ya viene preseleccionado; si viene de un archivo, elígelo a mano o déjalo sin asociar."
+    : "<b>Todavía no hay objetivos listados.</b> El navegador no los revela hasta que se concede permiso de cámara: abre la cámara una vez, aquí o en Directo, y vuelve. Sin eso el perfil se guardará sin asociar y seguirás viendo «sin calibrar»."}</div>
 
   <h3>Geometría del ensayo</h3>
   <div class="row"><label>Distancia horiz.</label><input type="number" step="0.1" id="cD" value="${S.calib.d}"><span class="u">cm</span></div>
@@ -1410,15 +1422,19 @@ function enlaza(){
   on("cAdd","click",()=>{S.calib.puntos.push({h:null,y:null});pinta();});
   on("cDel","click",()=>{S.calib.puntos.pop();pinta();});
   on("cRun","click",()=>{S.calib.out=ajusta();pinta();});
+  on("cCam","change",e=>{S.calib.camId=e.target.value; pinta();});
   on("cSave","click",()=>{
     const o=S.calib.out; if(!o||o.err) return;
     const name=prompt("Nombre del perfil (incluye modo de captura y zoom):","perfil "+S.src.w+"×"+S.src.h);
     if(!name) return;
     const id="p"+Date.now();
     S.perfiles.push({id,name,fRel:o.fRel,y0Rel:o.y0Rel,delta:o.delta,uF:0.40,
-      w:S.src.w, h:S.src.h, camId:S.srcCamId||"",
+      w:S.src.w, h:S.src.h, camId:S.calib.camId||"",
       note:"Ajuste de "+o.n+" puntos, rms "+fmt(o.rms,2)+" px, "+S.src.w+"×"+S.src.h+" px"});
-    S.perfilId=id; guarda(); S.modo="ajustes"; sincTabs(); pinta();
+    S.perfilId=id; guarda(); pinta();
+    alert(S.calib.camId
+      ? "Perfil guardado y asociado al objetivo. Ya figurará como calibrado en Directo."
+      : "Perfil guardado SIN asociar a ningún objetivo: habrá que elegirlo a mano, y en Directo ese objetivo seguirá figurando como sin calibrar.");
   });
   on("cSaveD","click",()=>{
     const o=S.calib.out; if(!o||o.err) return;
@@ -1481,7 +1497,7 @@ $$(".tab").forEach(b=>b.addEventListener("click",()=>{
 if (window.ResizeObserver) new ResizeObserver(()=>dimensiona()).observe($("#stage"));
 window.addEventListener("resize",dimensiona);
 window.addEventListener("orientationchange",()=>setTimeout(dimensiona,250));
-dimensiona(); pinta(); cargaCapturas();
+dimensiona(); pinta(); cargaCapturas(); listaCamaras().then(pinta);
 activaSensores().catch(()=>{});
 </script>
 </body>
