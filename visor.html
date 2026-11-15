@@ -23,6 +23,7 @@ header{flex:0 0 auto;background:var(--panel);border-bottom:1px solid var(--line)
 .tab{flex:0 0 auto;padding:11px 14px;font-size:13px;color:var(--dim);border:none;
   background:none;border-bottom:2px solid transparent;font-weight:500}
 .tab.on{color:var(--acc);border-bottom-color:var(--acc)}
+a.tab{font-size:17px;padding:9px 13px;color:var(--dim)}
 
 #stage{flex:1 1 auto;position:relative;overflow:hidden;background:#000;touch-action:none;min-height:150px}
 #cv{position:absolute;inset:0;width:100%;height:100%;display:block}
@@ -91,6 +92,7 @@ a{color:var(--acc)}
 
 <header>
   <div class="tabs">
+    <a class="tab" href="index.html" style="text-decoration:none;display:flex;align-items:center">⌂</a>
     <button class="tab on" data-m="foto">Foto</button>
     <button class="tab" data-m="video">Vídeo</button>
     <button class="tab" data-m="directo">Directo</button>
@@ -165,6 +167,15 @@ const guarda = () => {
   localStorage.setItem("vpd.med", JSON.stringify(S.med));
 };
 const perfil = () => S.perfiles.find(p=>p.id===S.perfilId) || S.perfiles[0];
+/* Factor de zoom del objetivo, deducido de la focal calibrada. Ninguna API lo
+   facilita, pero f dividida por la diagonal del fotograma es invariante frente
+   al recorte y comparable entre fuentes de distinta relación de aspecto.
+   La referencia ×1 es el objetivo principal del perfil base. */
+const FDIAG_REF = 0.67700*4000/Math.hypot(3000,4000);
+function zoomDe(p){
+  if(!p||!p.w||!p.h||!p.fRel) return null;
+  return (p.fRel*p.h/Math.hypot(p.w,p.h))/FDIAG_REF;
+}
 const PASO = () => S.paso==="fino" ? 0.25 : 4;   // en píxeles de imagen
 
 /* ------------------------------------------------------------- sensores */
@@ -570,8 +581,19 @@ function cargaVideo(file){
   v.onseeked = ()=>{ dibuja(); pinta(); };
 }
 async function listaCamaras(){
-  try{ const d=await navigator.mediaDevices.enumerateDevices();
-       S.cams=d.filter(x=>x.kind==="videoinput"); }catch(e){}
+  try{
+    const d=await navigator.mediaDevices.enumerateDevices();
+    const v=d.filter(x=>x.kind==="videoinput");
+    /* Solo las traseras: la frontal apunta al operador y no sirve para medir.
+       Si las etiquetas no permiten distinguirlas, se muestran todas. */
+    const tras=v.filter(x=>/back|rear|trasera|environment/i.test(x.label||""));
+    S.cams = tras.length? tras : v;
+  }catch(e){}
+}
+function nombreCam(c,i){
+  const p=S.perfiles.find(q=>q.camId && q.camId===c.deviceId);
+  const z=p?zoomDe(p):null;
+  return "Trasera "+(i+1)+(z!==null?"  ·  ×"+fmt(z,2)+" (calibrada)":"  ·  sin calibrar");
 }
 async function abreDirecto(){
   S.liveErr="";
@@ -585,6 +607,10 @@ async function abreDirecto(){
     await listaCamaras();
     const v=$("#vid"); v.src=""; v.srcObject=st; await v.play();
     S.src={kind:"live", el:v, w:v.videoWidth, h:v.videoHeight};
+    const idReal = st.getVideoTracks()[0]?.getSettings?.().deviceId;
+    S.srcCamId = idReal || S.camId || "";
+    const acorde = S.perfiles.find(q=>q.camId && q.camId===S.srcCamId);
+    if(acorde){ S.perfilId=acorde.id; guarda(); }     // perfil propio de ese objetivo
     limpiaMarcas(); encaja(); $("#hint").classList.add("hide");
     const bucle=()=>{ if(S.src&&S.src.kind==="live"){dibuja(); vidRAF=requestAnimationFrame(bucle);} };
     cancelAnimationFrame(vidRAF); bucle(); pinta();
@@ -764,11 +790,12 @@ function uiMedida(m){
   }
   if (m==="directo" && S.src && S.src.kind==="live" && S.cams.length>1){
     h += `<div class="row"><label>Objetivo</label><select id="iCam">
-      ${S.cams.map((c,i)=>`<option value="${c.deviceId}"${c.deviceId===S.camId?" selected":""}>${
-        (c.label||("cámara "+(i+1))).replace(/</g,"")}</option>`).join("")}
+      ${S.cams.map((c,i)=>`<option value="${c.deviceId}"${c.deviceId===S.srcCamId?" selected":""}>${
+        nombreCam(c,i)}</option>`).join("")}
     </select></div>
-    <div class="note">Si la imagen sale más abierta de lo normal, estás en el gran angular: cambia de objetivo.
-    Cada objetivo necesita su propio perfil de calibración.</div>`;
+    <div class="note">Solo se listan las traseras. El factor ×  no lo da el sistema: se deduce de la focal
+    calibrada de cada objetivo, tomando como ×1 el principal, así que aparece en cuanto calibras ese objetivo.
+    Al elegir una cámara con perfil propio, el perfil se activa solo.</div>`;
   }
   if (!S.src) return h + `<div class="note">Perfil activo: <b>${perfil().name}</b>.</div>` + tecBoton();
 
@@ -1022,6 +1049,7 @@ function uiAjustes(){
     <div class="kv"><span>f / altura de fotograma</span><b>${fmt(p.fRel,5)}</b></div>
     <div class="kv"><span>centro óptico relativo</span><b>${fmt(p.y0Rel,5)}</b></div>
     <div class="kv"><span>desalineación δ</span><b>${(p.delta>=0?"+":"")+fmt(p.delta,3)}°</b></div>
+    <div class="kv"><span>factor de zoom del objetivo</span><b>${zoomDe(p)===null?"—":"×"+fmt(zoomDe(p),2)}</b></div>
     <div class="kv"><span>calibrado sobre</span><b>${p.w&&p.h?p.w+"×"+p.h+" px (relación "+fmt(p.w/p.h,3)+")":"sin registrar"}</b></div>
     <div class="kv"><span>error de la focal</span><b>${fmt(p.uF,2)} %</b></div>
   </div>
@@ -1139,7 +1167,7 @@ function enlaza(){
     if(!name) return;
     const id="p"+Date.now();
     S.perfiles.push({id,name,fRel:o.fRel,y0Rel:o.y0Rel,delta:o.delta,uF:0.40,
-      w:S.src.w, h:S.src.h,
+      w:S.src.w, h:S.src.h, camId:S.srcCamId||"",
       note:"Ajuste de "+o.n+" puntos, rms "+fmt(o.rms,2)+" px, "+S.src.w+"×"+S.src.h+" px"});
     S.perfilId=id; guarda(); S.modo="ajustes"; sincTabs(); pinta();
   });
