@@ -700,6 +700,9 @@ async function usaCaptura(id){
   const bmp=await createImageBitmap(c.blob);
   S.src={kind:"img", el:bmp, w:bmp.width, h:bmp.height};
   S.srcCamId=c.camId||"";
+  /* Sin perfil para este objetivo, lo que hace falta es el ajuste óptico
+     completo: «solo desalineación» no permite crear un perfil nuevo. */
+  if(!S.perfiles.some(q=>q.camId && q.camId===c.camId)) S.calib.tipo="full";
   limpiaMarcas(); S.calib.puntos.forEach(p=>p.y=null); S.calib.out=null;
   encaja(); $("#hint").classList.add("hide"); pinta();
 }
@@ -1118,12 +1121,25 @@ function tecBoton(){
   y los parámetros del modelo: es lo que justifica la medida ante un organismo notificado. Para medir en campo no hace falta.</div>`;
 }
 
+function estadoCalib(){
+  const pts=S.calib.puntos;
+  const fij=pts.filter(p=>p.y!==null && isFinite(+p.h)).length;
+  const alt=pts.filter(p=>isFinite(+p.h)).length;
+  const min=S.calib.tipo==="phi"?2:3;
+  const perfil=S.perfiles.find(q=>q.camId && q.camId===S.srcCamId);
+  const geom=!!(+S.calib.d) && S.calib.hCam!=="" && S.calib.hCam!==null;
+  return {fij, alt, min, nTot:pts.length, geom, perfil,
+          ajuste: !!(S.calib.out && !S.calib.out.err),
+          listo: geom && fij>=min};
+}
 function uiCalib(){
   const o = S.calib.out, esPhi = S.calib.tipo==="phi";
   let h = `<div class="seg">
     <button class="${esPhi?"":"on"}" id="kFull">Óptica (f, y₀, φ)</button>
     <button class="${esPhi?"on":""}" id="kPhi">Solo desalineación</button>
   </div>
+  ${esPhi?`<div class="verdict v-na" style="text-align:left;font-weight:500">Este modo <b>no crea perfiles</b>:
+    solo recalcula δ sobre el perfil activo. Para calibrar un objetivo nuevo, cambia a «Óptica».</div>`:""}
   <div class="note">${esPhi
     ? "Ajusta <b>una sola incógnita</b>, la inclinación óptica de la toma, tomando f e y₀ del perfil activo. Al restarle la lectura del sensor sale la desalineación δ. Es el único ajuste fiable para δ: repítelo en dos o tres fotos con inclinaciones distintas y comprueba que concuerdan dentro de una décima de grado."
     : "Ajusta focal, centro óptico e inclinación a la vez. <b>Con las marcas en una sola vertical y una sola distancia los tres parámetros están correlacionados</b>: el residuo puede salir bajo y los valores individuales ser poco fiables. Úsalo para obtener f e y₀ promediando varias tomas, y <b>no lo uses para la desalineación</b>."}</div>
@@ -1167,7 +1183,27 @@ function uiCalib(){
     h += `<div class="err">Balanceo lateral ρ = ${fmt(rlc,2)}° en la lectura actual.
     La foto de calibración debe tomarse con ρ ≈ 0: un balanceo apreciable sesga y₀ y φ.</div>`;
 
-  h += `<h3>Geometría del ensayo</h3>
+  const E=estadoCalib();
+  const paso=(ok,txt)=>`<div class="kv"><span style="text-align:left">${ok?"✓":"○"} ${txt}</span><b></b></div>`;
+  h += `<h3>Estado de la calibración</h3>
+  <div class="card">
+    ${paso(true,"Imagen cargada · "+S.src.w+"×"+S.src.h+" px")}
+    ${paso(E.geom,"Distancia y altura de lente introducidas")}
+    ${paso(E.alt>=E.min,"Alturas de las marcas escritas ("+E.alt+" de "+E.nTot+")")}
+    ${paso(E.fij>=E.min,"Marcas fijadas con la cruz ("+E.fij+" de "+E.nTot+", mínimo "+E.min+")")}
+    ${paso(E.ajuste,"Ajuste calculado")}
+    ${paso(!!E.perfil,"Perfil guardado para este objetivo"+(E.perfil?": "+E.perfil.name:""))}
+    <div class="verdict ${E.perfil?"v-ok":(E.ajuste?"v-na":"v-no")}" style="text-align:left;font-weight:500">
+      ${E.perfil ? "Objetivo calibrado. Al seleccionarlo en Directo, este perfil se activa solo."
+       : E.ajuste ? "Falta el último paso: pulsa <b>Guardar como perfil nuevo</b>, abajo del resultado del ajuste."
+       : !E.geom ? "Siguiente: escribe la distancia horizontal y la altura de la lente."
+       : E.alt<E.min ? "Siguiente: escribe la altura real de cada marca en la tabla de puntos."
+       : E.fij<E.min ? "Siguiente: lleva la cruz sobre cada marca y pulsa <b>fijar</b> en su fila."
+       : "Siguiente: pulsa <b>Ajustar</b>."}
+    </div>
+  </div>
+
+  <h3>Geometría del ensayo</h3>
   <div class="row"><label>Distancia horiz.</label><input type="number" step="0.1" id="cD" value="${S.calib.d}"><span class="u">cm</span></div>
   <div class="row"><label>Altura de lente</label><input type="number" step="0.1" id="cHc" value="${S.calib.hCam}"><span class="u">cm</span></div>
   <div class="row"><label>Lectura sensor</label><input type="number" step="0.01" id="cSen" value="${S.calib.sensor}"><span class="u">°</span></div>
