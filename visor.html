@@ -137,6 +137,7 @@ const PERFIL_BASE = {
   y0Rel:0.49750,    // centro óptico / altura de fotograma
   delta:0.511,      // desalineación acelerómetro → eje óptico (grados)
   uF:0.40,          // u(f) relativa, %
+  w:3000, h:4000,   // fotograma sobre el que se calibró
   note:"Validado 15/11/2026 sobre 3000×4000 px"
 };
 
@@ -155,6 +156,7 @@ const S = {
   calib:{ puntos:[], d:100, hCam:0, sensor:0, out:null, tipo:"phi" },
   reticula:false,
   liveErr:"",
+  cams:[], camId: localStorage.getItem("vpd.camId")||"",
   tecnico: localStorage.getItem("vpd.tecnico")==="1"
 };
 const guarda = () => {
@@ -298,6 +300,19 @@ function semaforoRoll(r){
 }
 
 /* ----------------------------------------------------------- geometría */
+/* El perfil guarda el fotograma sobre el que se calibró. Si la fuente actual
+   tiene OTRA RELACIÓN DE ASPECTO, no es solo otra resolución: es otro campo de
+   visión, casi siempre otro objetivo, y la focal del perfil no es aplicable.
+   Un perfil de foto 3:4 aplicado a vídeo 9:16 de la cámara ultra gran angular
+   da un error de escala constante del orden del 65 %. */
+function desajustePerfil(){
+  if(!S.src) return null;
+  const p=perfil();
+  if(!p.w||!p.h) return null;
+  const aP=p.w/p.h, aS=S.src.w/S.src.h;
+  if(Math.abs(aP-aS)/aP>0.02) return {aP,aS,pw:p.w,ph:p.h};
+  return null;
+}
 function geom(){
   const p = perfil(), src = S.src;
   if (!src) return null;
@@ -552,11 +567,20 @@ function cargaVideo(file){
   };
   v.onseeked = ()=>{ dibuja(); pinta(); };
 }
+async function listaCamaras(){
+  try{ const d=await navigator.mediaDevices.enumerateDevices();
+       S.cams=d.filter(x=>x.kind==="videoinput"); }catch(e){}
+}
 async function abreDirecto(){
   S.liveErr="";
   try{
-    const st = await navigator.mediaDevices.getUserMedia({
-      video:{facingMode:{ideal:"environment"}, width:{ideal:3840}, height:{ideal:2160}}, audio:false});
+    /* Sin forzar 3840 de ancho: esa petición hacía que Chrome abriera la
+       cámara ultra gran angular en vez de la principal, con una focal un 65 %
+       menor que la del perfil de foto. */
+    const vc = S.camId ? {deviceId:{exact:S.camId}, width:{ideal:1920}}
+                       : {facingMode:{ideal:"environment"}, width:{ideal:1920}};
+    const st = await navigator.mediaDevices.getUserMedia({video:vc, audio:false});
+    await listaCamaras();
     const v=$("#vid"); v.src=""; v.srcObject=st; await v.play();
     S.src={kind:"live", el:v, w:v.videoWidth, h:v.videoHeight};
     limpiaMarcas(); encaja(); $("#hint").classList.add("hide");
@@ -732,10 +756,29 @@ function uiMedida(m){
   if (m==="directo"){
     h += S.src&&S.src.kind==="live"
       ? `<div class="btns"><button class="o" id="bFreeze">Congelar fotograma</button></div>`
+        + `<div class="note">Fuente en directo: <b>${S.src.w}×${S.src.h} px</b>, relación ${fmt(S.src.w/S.src.h,3)}.</div>`
       : `<div class="btns"><button class="p" id="bLive">Abrir cámara</button></div>`;
     if (S.liveErr) h += `<div class="err">Cámara: ${S.liveErr}</div>`;
   }
+  if (m==="directo" && S.src && S.src.kind==="live" && S.cams.length>1){
+    h += `<div class="row"><label>Objetivo</label><select id="iCam">
+      ${S.cams.map((c,i)=>`<option value="${c.deviceId}"${c.deviceId===S.camId?" selected":""}>${
+        (c.label||("cámara "+(i+1))).replace(/</g,"")}</option>`).join("")}
+    </select></div>
+    <div class="note">Si la imagen sale más abierta de lo normal, estás en el gran angular: cambia de objetivo.
+    Cada objetivo necesita su propio perfil de calibración.</div>`;
+  }
   if (!S.src) return h + `<div class="note">Perfil activo: <b>${perfil().name}</b>.</div>` + tecBoton();
+
+  const des = desajustePerfil();
+  if (des) h += `<div class="verdict v-no" style="text-align:left;font-weight:500">
+    <b>Las alturas que salgan serán falsas.</b><br>
+    El perfil «${perfil().name}» se calibró sobre ${des.pw}×${des.ph} px, relación ${fmt(des.pw/des.ph,3)},
+    y esta fuente es ${S.src.w}×${S.src.h} px, relación ${fmt(des.aS,3)}.
+    Distinta relación de aspecto no es solo otra resolución: es otro campo de visión, casi siempre otro objetivo,
+    y la focal del perfil no es aplicable. El error resultante es un <b>factor de escala constante</b>, así que
+    todas las medidas salen mal por el mismo múltiplo y nada parece roto.<br>
+    Calibra un perfil para esta fuente en la pestaña Calibración.</div>`;
 
   /* --- toma: distancia y ángulos --- */
   const rl = rollUsado(), sem = semaforoRoll(rl), tt = tiltUsado();
@@ -805,6 +848,7 @@ function uiMedida(m){
     <button class="${S.sel===-1?"o":"p"}" id="bFix">Fijar ${S.sel===-1?"origen":"punto "+(S.sel+1)}</button>
     <button id="bAdd">+ punto</button>
   </div>
+  ${(des||S.tecnico)?`<div class="btns"><button class="${des?"p":""}" id="bCalibAqui">Calibrar con este fotograma</button></div>`:""}
   ${!dentro()?'<div class="err">La cruz está fuera de la imagen.</div>':""}`;
 
   /* --- veredicto global --- */
@@ -976,6 +1020,7 @@ function uiAjustes(){
     <div class="kv"><span>f / altura de fotograma</span><b>${fmt(p.fRel,5)}</b></div>
     <div class="kv"><span>centro óptico relativo</span><b>${fmt(p.y0Rel,5)}</b></div>
     <div class="kv"><span>desalineación δ</span><b>${(p.delta>=0?"+":"")+fmt(p.delta,3)}°</b></div>
+    <div class="kv"><span>calibrado sobre</span><b>${p.w&&p.h?p.w+"×"+p.h+" px (relación "+fmt(p.w/p.h,3)+")":"sin registrar"}</b></div>
     <div class="kv"><span>error de la focal</span><b>${fmt(p.uF,2)} %</b></div>
   </div>
   <div class="note">${p.note||""}</div>
@@ -1041,6 +1086,16 @@ function enlaza(){
     S.sel = S.marks.puntos.length-1; pinta();
   });
   on("bRet","click",()=>{ S.reticula=!S.reticula; pinta(); });
+  on("iCam","change",async e=>{
+    S.camId=e.target.value; localStorage.setItem("vpd.camId",S.camId);
+    cancelAnimationFrame(vidRAF);
+    ($("#vid").srcObject?.getTracks()||[]).forEach(t=>t.stop());
+    await abreDirecto();});
+  on("bCalibAqui","click",()=>{
+    S.modo="calib"; S.calib.out=null;
+    if(!S.calib.puntos.length) S.calib.puntos=[{h:null,y:null},{h:null,y:null},{h:null,y:null},{h:null,y:null},{h:null,y:null}];
+    S.calib.puntos.forEach(p=>p.y=null);
+    sincTabs(); pinta();});
   on("bTec","click",()=>{ S.tecnico=!S.tecnico;
     localStorage.setItem("vpd.tecnico", S.tecnico?"1":"0"); pinta(); });
 
@@ -1082,6 +1137,7 @@ function enlaza(){
     if(!name) return;
     const id="p"+Date.now();
     S.perfiles.push({id,name,fRel:o.fRel,y0Rel:o.y0Rel,delta:o.delta,uF:0.40,
+      w:S.src.w, h:S.src.h,
       note:"Ajuste de "+o.n+" puntos, rms "+fmt(o.rms,2)+" px, "+S.src.w+"×"+S.src.h+" px"});
     S.perfilId=id; guarda(); S.modo="ajustes"; sincTabs(); pinta();
   });
