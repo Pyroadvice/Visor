@@ -1327,7 +1327,16 @@ function uiAjustes(){
     <div class="kv"><span>error de la focal</span><b>${fmt(p.uF,2)} %</b></div>
   </div>
   <div class="note">${p.note||""}</div>
-  ${S.perfiles.length>1?'<div class="btns"><button id="aDel">Borrar este perfil</button></div>':""}
+  <div class="btns"><button id="aDel">Borrar este perfil</button></div>
+  <div class="btns">
+    <button id="aDelTodo">Borrar todos los perfiles</button>
+    <button id="aCero">Empezar de cero</button>
+  </div>
+  <div class="note"><b>Borrar todos los perfiles</b> deja únicamente el perfil base de fábrica, para que la
+  aplicación siga funcionando; no toca las capturas ni los datos de campo.
+  <b>Empezar de cero</b> borra además las capturas de calibración guardadas, la distancia y los ángulos de la
+  última toma, la elección de objetivo y las referencias sobre la imagen. Ninguna de las dos cosas se puede
+  deshacer, así que exporta antes lo que quieras conservar.</div>
 
   <h3>Incertidumbres de entrada</h3>
   <div class="row"><label>Error de marcado</label><input type="number" step="0.5" id="aUpx" value="${S.med.upx}"><span class="u">px</span></div>
@@ -1494,9 +1503,35 @@ function enlaza(){
   // ajustes
   on("aSel","change",e=>{S.perfilId=e.target.value;guarda();pinta();});
   on("aDel","click",()=>{
-    if(!confirm("¿Borrar el perfil «"+perfil().name+"»?")) return;
+    if(!confirm("¿Borrar el perfil «"+perfil().name+"»?\n\nNo se puede deshacer.")) return;
     S.perfiles=S.perfiles.filter(p=>p.id!==S.perfilId);
+    /* Si se borra el último, se repone el de fábrica: sin ningún perfil la
+       aplicación no puede calcular nada. */
+    if(!S.perfiles.length){ S.perfiles=[Object.assign({},PERFIL_BASE)];
+      alert("Era el último perfil: se repone el perfil base de fábrica."); }
     S.perfilId=S.perfiles[0].id; guarda(); pinta();
+  });
+  on("aDelTodo","click",()=>{
+    if(!confirm("¿Borrar LOS "+S.perfiles.length+" PERFILES?\n\nQuedará solo el perfil base de fábrica.\nNo se puede deshacer.")) return;
+    S.perfiles=[Object.assign({},PERFIL_BASE)]; S.perfilId=S.perfiles[0].id;
+    guarda(); pinta();
+  });
+  on("aCero","click",async()=>{
+    if(!confirm("EMPEZAR DE CERO\n\nSe borrarán:\n· los "+S.perfiles.length+" perfiles (queda el base de fábrica)\n· las "
+      +S.capturas.length+" capturas de calibración\n· distancia, ángulos y referencias de la última toma\n· la elección de objetivo\n\nNo se puede deshacer. ¿Continuar?")) return;
+    for(const c of S.capturas){ if(URLS[c.id]){URL.revokeObjectURL(URLS[c.id]); delete URLS[c.id];}
+      try{ await idbDel(c.id); }catch(e){} }
+    S.capturas=[];
+    S.perfiles=[Object.assign({},PERFIL_BASE)]; S.perfilId=S.perfiles[0].id;
+    S.med={d:100, ud:1.0, hRef:0, tol:20, upx:3, uphi:0.3, phiManual:"", rollManual:"",
+           obliq:false, angulos:"15, 30", horiz:false, alturas:"20, 30"};
+    S.camId=""; S.srcCamId=""; localStorage.removeItem("vpd.camId");
+    S.calib={puntos:[], d:100, hCam:0, sensor:0, out:null, tipo:"phi", camId:"", origen:"", capId:""};
+    S.marks={origen:null, puntos:[{lab:"Altura de funcionamiento", x:null, y:null}]}; S.sel=-1;
+    S.src=null; S.reticula=false;
+    cerrarCamara(); $("#hint").classList.remove("hide");
+    guarda(); pinta();
+    alert("Hecho. Todo vuelve al estado inicial.");
   });
   num("aUpx","upx",S.med); num("aUphi","uphi",S.med);
   on("aExp","click",()=>{
