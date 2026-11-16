@@ -1333,9 +1333,18 @@ function uiCamaras(){
       h+=`<div class="row"><label>Zoom</label>
         <input type="number" step="0.1" id="cmZoom" value="${fmt(S.zoomActual??S.zoomCap.min,1)}"
           min="${S.zoomCap.min}" max="${S.zoomCap.max}"><span class="u">×</span></div>
-        <div class="note">Este objetivo admite zoom de ×${fmt(S.zoomCap.min,1)} a ×${fmt(S.zoomCap.max,1)}.
-        <b>Cada valor de zoom que uses para medir necesita su propia cámara aquí y su propia calibración</b>,
-        porque con otro zoom la cámara ve distinto.</div>`;
+        <div class="note">Esta lente admite zoom de ×${fmt(S.zoomCap.min,1)} a ×${fmt(S.zoomCap.max,1)}.
+        <b>Cuidado con este número: no es el mismo que el de la aplicación de cámara del teléfono.</b>
+        Aquí el ×1 es el campo completo de <i>la lente que tengas seleccionada arriba</i>, así que el mismo valor
+        significa cosas distintas en cada lente. Los ×0,6, ×1, ×2, ×3 y ×10 del teléfono son combinaciones de
+        lente y recorte, y están referidos siempre a la principal.
+        <br><br><b>No hace falta que adivines la equivalencia.</b> Elige el zoom que quieras, guarda la cámara,
+        y calíbrala: el factor × que verás después sale de la focal medida y <b>sí está en la misma escala que el
+        teléfono</b>. Entonces renombras la cámara con el nombre que corresponda.
+        <br><br>Cada valor de zoom que vayas a usar para medir necesita su propia cámara aquí y su propia
+        calibración. Y comprueba que la imagen sigue nítida: si el zoom recorta el sensor, ganas resolución
+        angular de verdad y es útil para efectos lejanos; si solo interpola, emborrona justo los bordes sobre los
+        que hay que colocar la cruz.</div>`;
     else
       h+=`<div class="note">Este móvil <b>no deja al navegador controlar el zoom</b>, así que cada cámara que
       definas aquí es uno de los objetivos físicos de la lista de arriba. No se puede crear un «×2» aparte: ese
@@ -1347,7 +1356,7 @@ function uiCamaras(){
       calíbralos, y renómbralos después: <b>la calibración te dirá qué son</b>, porque el factor × sale de la
       focal medida: ×1 el principal, ×0,6 aproximadamente el gran angular.</div>`;
     h+=`<div class="row"><label>Nombre</label><input type="text" id="cmNombre"
-      placeholder="p. ej. Principal ×1" value=""></div>
+      placeholder="p. ej. «Lente A zoom 1» · ponle el definitivo tras calibrar" value=""></div>
     <div class="btns"><button class="g" id="cmGuardar">Guardar esta cámara</button>
       <button id="cmCerrar">Cerrar</button></div>
     <div class="note">Fuente actual: <b>${S.src.w}×${S.src.h} px</b>${
