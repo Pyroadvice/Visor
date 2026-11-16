@@ -814,11 +814,6 @@ async function listaCamaras(){
     S.cams = tras.length? tras : v;
   }catch(e){}
 }
-function nombreCam(c,i){
-  const p=null;   // los perfiles cuelgan de la configuración, no del dispositivo
-  const z=p?zoomDe(p):null;
-  return "Trasera "+(i+1)+(z!==null?"  ·  ×"+fmt(z,2)+" (calibrada)":"  ·  sin calibrar");
-}
 /* Abre una CONFIGURACIÓN guardada: dispositivo más zoom. */
 async function abreCamara(camId){
   const c=camara(camId); if(!c) return abreDirecto();
@@ -1406,14 +1401,18 @@ function uiCalib(){
   /* --- captura con la cámara --- */
   const vivo = S.src && S.src.kind==="live";
   if (vivo){
-    h += S.cams.length>1 ? `<div class="row"><label>Objetivo</label><select id="iCam">
-      ${S.cams.map((c,i)=>`<option value="${c.deviceId}"${c.deviceId===S.srcCamId?" selected":""}>${
-        nombreCam(c,i)}</option>`).join("")}</select></div>` : "";
-    h += `<div class="btns"><button class="p" id="bCapCal">Capturar</button>
+    h += S.camaras.length
+      ? `<div class="row"><label>Cámara</label><select id="iCam">
+          ${S.camaras.map(c=>`<option value="${c.id}"${c.id===S.camaraId?" selected":""}>${c.nombre}${
+            perfilDeCamara(c.id)?"":"  ·  sin calibrar"}</option>`).join("")}</select></div>`
+      : `<div class="verdict v-na" style="text-align:left;font-weight:500">No has definido ninguna cámara.
+         Defínelas en la pestaña <b>Cámaras</b> y vuelve aquí a capturarlas.</div>`;
+    h += `<div class="btns"><button class="p" id="bCapCal" ${S.camaras.length?"":"disabled"}>Capturar</button>
       <button id="bCerrarCam">Cerrar cámara</button></div>
-    <div class="note">Fuente: <b>${S.src.w}×${S.src.h} px</b>. Captura con un objetivo, cambia de objetivo
-    arriba y vuelve a capturar <b>sin tocar el trípode</b>: así los dos perfiles comparten distancia y altura
-    de lente exactas y son directamente comparables. La calibración se hace después, sobre las capturas.</div>`;
+    <div class="note">Capturando: <b>${nombreCamara(S.camaraId)}</b> · ${S.src.w}×${S.src.h} px.
+    Captura con una cámara, cambia de cámara arriba y vuelve a capturar <b>sin tocar el trípode</b>: así los dos
+    perfiles comparten distancia y altura de lente exactas y son directamente comparables. La calibración se hace
+    después, sobre las capturas.</div>`;
     if (S.capErr) h += `<div class="err">${S.capErr}</div>`;
   }
   if (S.liveErr) h += `<div class="err">Cámara: ${S.liveErr}</div>`;
