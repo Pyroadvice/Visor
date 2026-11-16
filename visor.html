@@ -27,6 +27,10 @@ a.tab{font-size:17px;padding:9px 13px;color:var(--dim)}
 
 #stage{flex:1 1 auto;position:relative;overflow:hidden;background:#000;touch-action:none;min-height:150px}
 #cv{position:absolute;inset:0;width:100%;height:100%;display:block}
+#bFS{position:absolute;right:8px;bottom:8px;width:40px;height:40px;padding:0;border-radius:9px;
+  background:rgba(13,17,23,.78);border:1px solid var(--line);color:var(--txt);font-size:19px;line-height:1;
+  display:flex;align-items:center;justify-content:center}
+:fullscreen #bFS,:-webkit-full-screen #bFS{display:none}
 #hint{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   color:var(--dim);font-size:13px;text-align:center;padding:24px;pointer-events:none}
 .badge{position:absolute;top:8px;background:rgba(0,0,0,.66);border:1px solid var(--line);
@@ -107,6 +111,7 @@ a{color:var(--acc)}
   <div class="badge" id="tiltbadge">φ —</div>
   <div class="badge" id="zoombadge">1,0×</div>
   <div id="hint">Carga una imagen para empezar</div>
+  <button id="bFS" title="Pantalla completa">⛶</button>
   <div class="fsnum" id="fsnum"></div>
   <div class="fsbar" id="fsbar"></div>
 </div>
@@ -238,7 +243,9 @@ function zoomDe(p){
   if(!p||!p.w||!p.h||!p.fRel) return null;
   return (p.fRel*p.h/Math.hypot(p.w,p.h))/FDIAG_REF;
 }
-const PASO = () => S.paso==="fino" ? 0.25 : 4;   // en píxeles de imagen
+/* El paso de la cruz va en píxeles de imagen y es siempre fino: con el zoom
+   de pantalla, un paso grueso no aporta nada y el selector solo ocupaba sitio. */
+const PASO = () => 0.25;
 
 /* ------------------------------------------------------------- sensores */
 let sensorOn = false;
@@ -1018,10 +1025,6 @@ function diagHTML(){
 
 function navHTML(){
   return `<h3>Colocación de la cruz</h3>
-  <div class="seg">
-    <button class="${S.paso==="fino"?"on":""}" id="pFino">Paso fino · 0,25 px</button>
-    <button class="${S.paso==="normal"?"on":""}" id="pNorm">Paso normal · 4 px</button>
-  </div>
   <div class="navwrap">
     <div class="pad">
       <button class="sp"></button><button id="nU">▲</button><button class="sp"></button>
@@ -1099,6 +1102,24 @@ function uiMedida(m){
        Dos selectores aparentemente alternativos para una sola decisión
        confunden más de lo que ayudan. */
     const pA=perfilDeCamara(S.camaraId);
+    /* Esta comprobación se hace AL ABRIR LA CÁMARA: el tamaño del fotograma y
+       el zoom aplicado son los que el navegador negoció en ese momento. Si
+       todo cuadra no hace falta enseñar la lista entera, basta decirlo en una
+       línea; el detalle sale cuando algo no cuadra, que es cuando importa, o
+       en el bloque técnico, para quien quiera auditarlo. */
+    const cz=camara(S.camaraId);
+    const mismoF = (pA&&pA.w) ? (pA.w===S.src.w && pA.h===S.src.h) : null;
+    const zoomOk = (!cz || cz.zoom===null || cz.zoom===undefined) ? true
+      : (S.zoomActual!==null && S.zoomActual!==undefined
+         && Math.abs(S.zoomActual-cz.zoom)<=0.02*Math.abs(cz.zoom||1));
+    const todoOk = !!pA && !S.camDistinta && mismoF!==false && zoomOk;
+    if (todoOk && !S.tecnico){
+      h += `<div class="verdict v-ok" style="text-align:left">
+        <b>${nombreCamara(S.camaraId)}</b> · calibrada · ${S.src.w}×${S.src.h} px, igual que al calibrar</div>
+        <div class="note">Comprobado al abrir la cámara: que el objetivo es el guardado, que su calibración existe,
+        y que el fotograma y el zoom son los de la calibración. Si algo no cuadrara, aquí saldría el detalle y el
+        aviso.</div>`;
+    } else {
     h += `<div class="card" style="padding:10px">
       <div class="kv"><span>cámara en uso</span><b>${nombreCamara(S.camaraId)}</b></div>
       ${S.camDistinta?`<div class="verdict v-no" style="text-align:left;font-weight:500">El navegador no pudo abrir
@@ -1128,7 +1149,10 @@ function uiMedida(m){
         es relativa a la altura del fotograma. Pero sí avisa de que el navegador ha negociado otra configuración de
         la cámara, y si además cambia el recorte o el zoom, el campo de visión ya no es el mismo y todas las alturas
         salen con un error de escala constante.
-        Compruébalo midiendo algo de altura conocida y mirando la casilla «altura real» de la tabla de marcas.</div>`:""}`;
+        Compruébalo midiendo algo de altura conocida y mirando la casilla «altura real» de la tabla de marcas.</div>`:""}
+      <div class="note">Todo esto se lee <b>al abrir la cámara</b>: el fotograma y el zoom son los que el navegador
+      negoció en ese momento, y se comparan con los que había al calibrar.</div>`;
+    }
   } else {
     const uso=usoDeModo(m), lista=perfilesDe(uso);
     if(!lista.length) return h + `<div class="verdict v-no" style="text-align:left;font-weight:500">
@@ -1159,8 +1183,10 @@ function uiMedida(m){
      modelo, se enseña al lado solo cuando la desalineación es apreciable, para
      que la cifra grande siga contestando a «¿lo tengo recto?». */
   const dl = +perfil().delta||0, dr = +perfil().deltaRoll||0;
-  const apl = (v,d) => (v===null||Math.abs(d)<0.05) ? ""
-    : `<span style="color:var(--dim);font:500 12px inherit"> · eje óptico ${(v+d>=0?"+":"")+fmt(v+d,2)}°</span>`;
+  /* Solo se enseña la LECTURA. El ángulo del eje óptico es otra magnitud y
+     vive en Trazabilidad: ponerlo al lado invitaba a confundir las dos, y la
+     insignia ya marca en rojo una δ que no sea creíble. */
+  const apl = () => "";
   if (esVivo()){
     const colR = sem.cls==="v-ok"?"var(--ok)":(sem.cls==="v-no"?"var(--bad)":"var(--warn)");
     h += `<div class="row"><label>Inclinación frontal</label>
@@ -1168,10 +1194,8 @@ function uiMedida(m){
     <div class="row"><label>Inclinación lateral</label>
       <div style="flex:1;font:700 17px ui-monospace,monospace;color:${colR}">${rl===null?"—":(rl>=0?"+":"")+fmt(rl,2)+"°"}${apl(rl,dr)}</div></div>
     ${sensorOn?"":'<div class="btns"><button class="p" id="bSens">Activar sensores</button></div>'}
-    <div class="note">Estas dos cifras son la <b>desviación respecto al plomo</b> que mide el inclinómetro: valen
-    0,00° con el móvil recto. El modelo no usa esa lectura directamente, le suma la desalineación del aparato
-    (δ y δρ) para obtener el ángulo del eje óptico, que es otra cosa y figura en el bloque técnico.
-    Al congelar, estas lecturas pasan a ser datos de la toma.</div>`;
+    <div class="note">Desviación respecto al plomo: 0,00° con el móvil recto. Al congelar pasan a ser datos de
+    la toma.</div>`;
   } else {
     h += `<div class="row"><label>Inclinación frontal</label><input type="text" inputmode="decimal" id="iPhi"
       value="${S.med.phiManual??""}" placeholder="ángulo de la toma">
@@ -1244,9 +1268,7 @@ function uiMedida(m){
   </div>
   ${(des||S.tecnico)?`<div class="btns"><button class="${des?"p":""}" id="bCalibAqui">Calibrar con este fotograma</button></div>`:""}
   ${!dentro()?'<div class="err">La cruz está fuera de la imagen.</div>':""}
-  ${S.src?`<div class="btns"><button id="bFS">Pantalla completa</button></div>
-  <div class="note">La vista ocupa toda la pantalla y quedan a mano solo elegir marca, fijarla y salir.
-  El nivel sigue visible: es lo que hay que vigilar antes de disparar.</div>`:""}`;
+`;
 
   /* --- veredicto global --- */
   if (R){
@@ -2299,7 +2321,6 @@ function enlaza(){
     S.marks.puntos[+e.target.dataset.i].lab = e.target.value; pinta();
   }));
   on("bFix","click",fijaAqui);
-  on("bFS","click",()=>fsAlterna($("#stage")));
   on("bAdd","click",()=>{
     S.marks.puntos.push({lab:"", x:null, y:null, hReal:null});
     S.sel = S.marks.puntos.length-1; pinta();
@@ -2341,8 +2362,7 @@ function enlaza(){
     localStorage.setItem("vpd.tecnico", S.tecnico?"1":"0"); pinta(); });
 
   // navegación
-  on("pFino","click",()=>{S.paso="fino";pinta();});
-  on("pNorm","click",()=>{S.paso="normal";pinta();});
+
   repite($("#nU"),()=>mueve(0,-1)); repite($("#nD"),()=>mueve(0,1));
   repite($("#nL"),()=>mueve(-1,0)); repite($("#nR"),()=>mueve(1,0));
   on("nC","click",()=>{ if(S.src){ S.view.tx=W/2-(S.src.w/2)*S.view.s; S.view.ty=H/2-(S.src.h/2)*S.view.s;
@@ -2656,6 +2676,7 @@ $("#fVidCal").addEventListener("change",e=>{
 if (window.ResizeObserver) new ResizeObserver(()=>dimensiona()).observe($("#stage"));
 window.addEventListener("resize",dimensiona);
 window.addEventListener("orientationchange",()=>setTimeout(dimensiona,250));
+$("#bFS").addEventListener("click",()=>fsAlterna($("#stage")));
 dimensiona(); pinta(); cargaCapturas(); listaCamaras().then(pinta);
 activaSensores().catch(()=>{});
 </script>

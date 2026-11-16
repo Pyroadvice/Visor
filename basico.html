@@ -27,6 +27,10 @@ canvas{display:block;width:100%;height:100%}
 #nivel{position:absolute;top:8px;left:8px;background:rgba(13,17,23,.82);border:1px solid var(--line);
   border-radius:8px;padding:6px 9px;font:600 13px ui-monospace,monospace;line-height:1.5}
 #nivel .v{display:inline-block;min-width:66px}
+#bFS{position:absolute;right:8px;bottom:8px;width:40px;height:40px;padding:0;border-radius:9px;
+  background:rgba(13,17,23,.78);border:1px solid var(--line);color:var(--txt);font-size:19px;line-height:1;
+  min-width:0;flex:0 0 auto;display:flex;align-items:center;justify-content:center}
+:fullscreen #bFS,:-webkit-full-screen #bFS{display:none}
 #aviso{position:absolute;bottom:8px;left:8px;right:8px;background:rgba(248,81,73,.92);color:#fff;
   border-radius:8px;padding:7px 10px;font-size:12.5px;display:none}
 #pan{flex:0 0 auto;max-height:52dvh;overflow:auto;background:var(--pan);
@@ -71,6 +75,7 @@ textarea{width:100%;min-height:80px;background:#0d1117;color:var(--txt);border:1
   <div id="lienzo">
     <canvas id="cv"></canvas>
     <div id="nivel"></div>
+    <button id="bFS" title="Pantalla completa">⛶</button>
     <div class="fsnum" id="fsnum"></div>
     <div class="fsbar" id="fsbar"></div>
   </div>
@@ -571,7 +576,7 @@ function pinta(){
         perfilDeCamara(c.id)?"":" · sin calibrar"}</option>`).join("")}
     </select></div>`;
     if(!pA) h += `<div class="ver v-no">Esta cámara no está calibrada: las alturas serían falsas.</div>
-      <div class="bt"><button class="p" onclick="location.href='visor.html'">Calibrarla en la versión completa</button></div>`;
+      <div class="nota">Calíbrala en Ajustes · Calibrar.</div>`;
     h += `<div class="bt">
       ${esVivo()?'<button id="bFre">Congelar</button><button id="bCie">Cerrar</button>'
                 :'<button class="p" id="bAbr">Abrir cámara</button>'}
@@ -612,7 +617,7 @@ function pinta(){
     </div>
     <div class="bt"><button class="g" id="fijar" ${dentro()?"":"disabled"}>Fijar ${
       S.sel===-1?"el origen":"el punto "+(S.sel+1)}</button>
-      <button id="bFS">Pantalla completa</button></div>
+</div>
     ${S.marks.origen?"":'<div class="nota">Pon la cruz sobre el punto de disparo y fija el origen. Las alturas se miden desde ahí.</div>'}
     <table><tr><th>Marca</th><th style="text-align:right">Altura</th><th style="text-align:right">±</th></tr>
     ${S.marks.puntos.map((q,i)=>{
@@ -655,7 +660,7 @@ function pinta(){
 
 function ata(){
   const on=(id,ev,fn)=>{ const el=$("#"+id); if(el) el.addEventListener(ev,fn); };
-  on("bFS","click",()=>fsAlterna($("#lienzo")));
+
   on("cam","change",async e=>{ cierraCamara(); S.camaraId=e.target.value; guarda();
     const a=perfilDeCamara(S.camaraId); if(a){ S.perfilId=a.id; guarda(); } await abreCamara(S.camaraId); });
   on("bAbr","click",()=>{ cierraVideo(); abreCamara(S.camaraId); });
@@ -1195,6 +1200,7 @@ function informeEnsayo(){
 
 /* ------------------------------------------------------------ arranque */
 addEventListener("resize",()=>{ mide(); if(S.src) encaja(); dibuja(); });
+$("#bFS").addEventListener("click",()=>fsAlterna($("#lienzo")));
 $("#fImg").addEventListener("change",e=>{
   const f=e.target.files&&e.target.files[0]; if(f) cargaImagen(f, !!S.pendCal); e.target.value=""; });
 $("#fVid").addEventListener("change",e=>{
