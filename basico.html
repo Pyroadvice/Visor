@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#0d1117">
+<link rel="manifest" href="app-basico.webmanifest">
+<link rel="apple-touch-icon" href="icon/visor-192.png">
+<title>Medida de alturas</title>
+<style>
+:root{--bg:#0d1117;--pan:#161b22;--line:#30363d;--txt:#e6edf3;--dim:#8b949e;
+      --ok:#3fb950;--warn:#d29922;--bad:#f85149;--acc:#4493f8}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);
+  font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overscroll-behavior:none}
+#wrap{display:flex;flex-direction:column;height:100dvh}
+#top{display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--pan);
+  border-bottom:1px solid var(--line);flex:0 0 auto}
+#top a{color:var(--dim);text-decoration:none;font-size:20px;line-height:1}
+#top h1{font-size:15px;margin:0;font-weight:600;flex:1}
+#top .lk{font-size:12.5px;color:var(--acc)}
+#lienzo{position:relative;flex:1 1 auto;min-height:180px;background:#000;touch-action:none}
+canvas{display:block;width:100%;height:100%}
+#nivel{position:absolute;top:8px;left:8px;background:rgba(13,17,23,.82);border:1px solid var(--line);
+  border-radius:8px;padding:6px 9px;font:600 13px ui-monospace,monospace;line-height:1.5}
+#nivel .v{display:inline-block;min-width:66px}
+#aviso{position:absolute;bottom:8px;left:8px;right:8px;background:rgba(248,81,73,.92);color:#fff;
+  border-radius:8px;padding:7px 10px;font-size:12.5px;display:none}
+#pan{flex:0 0 auto;max-height:52dvh;overflow:auto;background:var(--pan);
+  border-top:1px solid var(--line);padding:10px 12px 22px}
+h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);
+  margin:14px 0 7px;font-weight:600}
+h2:first-child{margin-top:0}
+.row{display:flex;align-items:center;gap:8px;margin:7px 0}
+.row label{flex:0 0 112px;color:var(--dim);font-size:13.5px}
+input,select{flex:1;min-width:0;background:#0d1117;color:var(--txt);border:1px solid var(--line);
+  border-radius:7px;padding:9px 10px;font:15px ui-monospace,monospace}
+.u{color:var(--dim);font-size:13px;flex:0 0 auto}
+.bt{display:flex;gap:8px;margin:9px 0;flex-wrap:wrap}
+button{flex:1;min-width:110px;background:#21262d;color:var(--txt);border:1px solid var(--line);
+  border-radius:8px;padding:12px 10px;font:600 14.5px inherit;cursor:pointer}
+button.p{background:var(--acc);border-color:var(--acc);color:#fff}
+button.g{background:var(--ok);border-color:var(--ok);color:#06250f}
+button:disabled{opacity:.45}
+table{width:100%;border-collapse:collapse;margin:8px 0;font-size:13.5px}
+th,td{text-align:left;padding:7px 5px;border-bottom:1px solid var(--line);vertical-align:middle}
+th{color:var(--dim);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em}
+td.n{font:600 15px ui-monospace,monospace;text-align:right;white-space:nowrap}
+td.u{font:12.5px ui-monospace,monospace;color:var(--dim);text-align:right;white-space:nowrap}
+.mini{flex:0 0 auto;min-width:0;padding:7px 10px;font-size:12.5px}
+.ver{border-radius:8px;padding:9px 11px;margin:9px 0;font-size:13.5px;text-align:center;font-weight:600}
+.v-ok{background:rgba(63,185,80,.14);color:var(--ok);border:1px solid rgba(63,185,80,.4)}
+.v-na{background:rgba(210,153,34,.14);color:var(--warn);border:1px solid rgba(210,153,34,.4)}
+.v-no{background:rgba(248,81,73,.14);color:var(--bad);border:1px solid rgba(248,81,73,.4)}
+.nota{color:var(--dim);font-size:12.5px;margin:7px 0}
+textarea{width:100%;min-height:80px;background:#0d1117;color:var(--txt);border:1px solid var(--line);
+  border-radius:7px;padding:8px;font:11.5px ui-monospace,monospace}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="top">
+    <a href="index.html" title="Inicio">⌂</a>
+    <h1>Medida de alturas</h1>
+    <a class="lk" href="visor.html">versión completa</a>
+  </div>
+  <div id="lienzo">
+    <canvas id="cv"></canvas>
+    <div id="nivel"></div>
+    <div id="aviso"></div>
+  </div>
+  <div id="pan"></div>
+</div>
+<video id="vid" playsinline muted style="display:none"></video>
+
+<script src="modelo.js"></script>
+<script src="ensayos.js"></script>
+<script>
+"use strict";
+/* ====================================================================
+   VERSIÓN BÁSICA
+
+   Misma física que el visor completo: el modelo de medida vive en
+   modelo.js y lo cargan las dos páginas, así que no pueden dar números
+   distintos. Lo que cambia es lo que se enseña.
+
+   Lo que esta página NO hace, a propósito: calibrar, gestionar cámaras,
+   analizar fotos o vídeos de archivo, y explicar el método en pantalla.
+   Para eso está el visor completo, con el que comparte almacenamiento:
+   los perfiles, las cámaras y las configuraciones de ensayo son los
+   mismos, calibrados allí y usados aquí.
+
+   Lo que sí hace, y es el motivo de que exista: medir en vivo con los
+   sensores a la vista, para poder poner la cámara a plomo antes de
+   disparar, y sacar el informe del ensayo.
+   ==================================================================== */
+
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const fmt = (v,n=2) => (v===null||v===undefined||!isFinite(v)) ? "—" : v.toFixed(n).replace(".",",");
+const dec = v => Math.abs(v)<10 ? 3 : (Math.abs(v)<100 ? 2 : 1);
+const fmtH = v => fmt(v, dec(v));
+const fmtEtiq = v => {
+  if(v===null||v===undefined||!isFinite(v)) return "—";
+  for(const k of [0,1,2]) if(Math.abs(v-+v.toFixed(k))<1e-9) return fmt(v,k);
+  return fmt(v,3);
+};
+const COL = ["#4493f8","#3fb950","#d29922","#bc8cff","#39c5cf","#f778ba"];
+const vacio = v => v===""||v===null||v===undefined;
+
+/* Umbrales de inclinación lateral, los mismos que en el visor completo. */
+const ROLL_OK = 1.0, ROLL_AVISO = 3.0;
+const U_ROLL_DESC = ROLL_AVISO;
+const USOS = {vivo:"en vivo", foto:"foto", video:"vídeo"};
+
+/* ------------------------------------------------------------ estado */
+const S = {
+  perfiles: JSON.parse(localStorage.getItem("vpd.perfiles")||"null") || [],
+  perfilId: localStorage.getItem("vpd.perfilId") || "",
+  camaras: JSON.parse(localStorage.getItem("vpd.camaras")||"null") || [],
+  camaraId: localStorage.getItem("vpd.camaraId") || "",
+  med: JSON.parse(localStorage.getItem("vpd.med")||"null") || {},
+  src:null, srcCamId:"", camDistinta:false, zoomActual:null, zoomCap:null,
+  marks:{ origen:null, puntos:[{lab:"Altura de funcionamiento", x:null, y:null, hReal:null}] },
+  sel:-1, view:{s:1,tx:0,ty:0,fit:1}, liveErr:"", reticula:false, tec:false
+};
+/* Valores por omisión para las claves que el visor completo escribe y
+   que aquí podrían faltar si nunca se ha abierto aquél. */
+Object.entries({d:100, ud:1.0, hRef:0, tol:20, upx:3, uphi:0.3, phiManual:"", rollManual:"",
+  obliq:false, angulos:"15, 30", horiz:false, alturas:"20, 30",
+  ref:"", lote:"", cat:"", nEns:"", operador:"", lugar:"", obs:"", ensayoId:"", ensayoNom:""})
+  .forEach(([k,v])=>{ if(S.med[k]===undefined) S.med[k]=v; });
+
+function guarda(){
+  try{
+    localStorage.setItem("vpd.med", JSON.stringify(S.med));
+    localStorage.setItem("vpd.perfilId", S.perfilId);
+    localStorage.setItem("vpd.camaraId", S.camaraId);
+  }catch(e){}
+}
+/* El visor completo puede haber cambiado perfiles o cámaras en otra
+   pestaña. Se releen al volver a esta, para no medir con algo retirado. */
+function relee(){
+  try{
+    S.perfiles = JSON.parse(localStorage.getItem("vpd.perfiles")||"null") || [];
+    S.camaras  = JSON.parse(localStorage.getItem("vpd.camaras")||"null") || [];
+  }catch(e){}
+}
+document.addEventListener("visibilitychange",()=>{ if(!document.hidden){ relee(); pinta(); } });
+
+const perfil = () => S.perfiles.find(p=>p.id===S.perfilId) || null;
+const camara = id => S.camaras.find(c=>c.id===id) || null;
+const nombreCamara = id => (camara(id)||{}).nombre || "—";
+const perfilDeCamara = id => S.perfiles.find(q=>q.camaraId===id && (q.uso||"foto")==="vivo") || null;
+const esVivo = () => !!(S.src && S.src.kind==="live");
+const lista = t => String(t||"").split(/[,;\s]+/).map(v=>+v).filter(v=>isFinite(v)&&v>0);
+
+/* ----------------------------------------------------------- sensores */
+const VENTANA = 700;
+const SENS = {on:false, pref:"grav", buf:[], bufR:[], grav:{n:0}, ori:{n:0}};
+function anota(src,p,r){
+  SENS[src].n++;
+  if(src!==SENS.pref && SENS[SENS.pref].n>0) return;
+  const t=performance.now();
+  if(p!==null&&p!==undefined){ SENS.buf.push({t,p}); while(SENS.buf.length&&t-SENS.buf[0].t>VENTANA) SENS.buf.shift(); }
+  if(r!==null&&r!==undefined){ SENS.bufR.push({t,r}); while(SENS.bufR.length&&t-SENS.bufR[0].t>VENTANA) SENS.bufR.shift(); }
+}
+const prom = b => b.length ? b.reduce((s,x)=>s+(x.p!==undefined?x.p:x.r),0)/b.length : null;
+const media    = () => ({p: prom(SENS.buf)});
+const mediaRoll= () => ({r: prom(SENS.bufR)});
+function fijaGrav(gx,gy,gz){
+  const m=Math.hypot(gx,gy,gz)||1;
+  anota("grav", Math.asin(-gz/m)*180/Math.PI, Math.atan2(gx,gy)*180/Math.PI);
+}
+async function activaSensores(){
+  try{
+    if(typeof DeviceMotionEvent!=="undefined" && DeviceMotionEvent.requestPermission)
+      await DeviceMotionEvent.requestPermission();
+    if(typeof DeviceOrientationEvent!=="undefined" && DeviceOrientationEvent.requestPermission)
+      await DeviceOrientationEvent.requestPermission();
+  }catch(e){}
+  window.addEventListener("devicemotion",ev=>{
+    const g=ev.accelerationIncludingGravity; if(!g||g.x===null) return;
+    fijaGrav(g.x,g.y,g.z);
+  });
+  window.addEventListener("deviceorientation",ev=>{
+    if(ev.beta===null) return; anota("ori", ev.beta-90, null);
+  });
+  SENS.on=true; pinta();
+}
+/* Lectura cruda (la que contesta «¿lo tengo recto?») frente al ángulo
+   del eje óptico (el que usa el modelo). No se mezclan nunca. */
+function tiltLeido(){ return esVivo() ? media().p : (vacio(S.med.phiManual)?null:+S.med.phiManual); }
+function rollLeido(){ return esVivo() ? mediaRoll().r : (vacio(S.med.rollManual)?null:+S.med.rollManual); }
+function tiltUsado(){
+  const d = perfil()? (+perfil().delta||0) : 0, v = tiltLeido();
+  return v===null ? (esVivo()?null:0) : v+d;
+}
+function rollUsado(){
+  const d = perfil()? (+perfil().deltaRoll||0) : 0, v = rollLeido();
+  return v===null ? null : v+d;
+}
+
+/* ------------------------------------------------------------- cámara */
+async function listaCamaras(){ try{ await navigator.mediaDevices.enumerateDevices(); }catch(e){} }
+async function aplicaZoom(track,z){
+  const caps = track.getCapabilities ? track.getCapabilities() : null;
+  S.zoomCap = (caps&&caps.zoom) ? {min:caps.zoom.min,max:caps.zoom.max} : null;
+  if(S.zoomCap && z!==null && z!==undefined && isFinite(z)){
+    try{ await track.applyConstraints({advanced:[{zoom:+z}]}); }catch(e){}
+  }
+  return track.getSettings ? (track.getSettings().zoom ?? null) : null;
+}
+async function abreCamara(camId){
+  const c=camara(camId);
+  if(c){ S.camaraId=camId; guarda(); }
+  S.liveErr="";
+  try{
+    const devId = c?c.deviceId:undefined, zoom = c?c.zoom:undefined;
+    const intentos=[];
+    if(typeof devId==="string") intentos.push({deviceId:{exact:devId}, width:{ideal:1920}});
+    intentos.push({facingMode:{ideal:"environment"}, width:{ideal:1920}});
+    intentos.push({width:{ideal:1920}});
+    intentos.push({});
+    let st=null, ult=null;
+    for(const v of intentos){
+      try{ st=await navigator.mediaDevices.getUserMedia({video:v,audio:false}); break; }catch(e){ ult=e; }
+    }
+    if(!st) throw (ult||new Error("no se pudo abrir ninguna cámara"));
+    await listaCamaras();
+    const tr=st.getVideoTracks()[0];
+    S.zoomActual = await aplicaZoom(tr, zoom);
+    const v=$("#vid"); v.srcObject=st; await v.play();
+    S.src={kind:"live", el:v, w:v.videoWidth, h:v.videoHeight};
+    S.srcCamId = tr?.getSettings?.().deviceId || (typeof devId==="string"?devId:"");
+    S.camDistinta = !!(typeof devId==="string" && S.srcCamId && S.srcCamId!==devId);
+    const acorde = perfilDeCamara(S.camaraId);
+    if(acorde){ S.perfilId=acorde.id; guarda(); }
+    limpiaMarcas(); encaja();
+    if(!SENS.on) activaSensores();
+    const bucle=()=>{ if(esVivo()){ dibuja(); raf=requestAnimationFrame(bucle); } };
+    cancelAnimationFrame(raf); bucle(); pinta();
+  }catch(e){
+    const n=e&&e.name;
+    S.liveErr = n==="NotAllowedError" ? "permiso denegado: concédelo en el candado de la barra de direcciones"
+      : n==="NotFoundError" ? "este aparato no ofrece ninguna cámara al navegador"
+      : n==="NotReadableError" ? "la cámara está ocupada por otra aplicación"
+      : n==="OverconstrainedError" ? "la lente guardada ya no existe; vuelve a definirla en la versión completa"
+      : (e.message||String(e));
+    pinta();
+  }
+}
+let raf=0;
+function cierraCamara(){
+  const v=$("#vid");
+  if(v.srcObject){ v.srcObject.getTracks().forEach(t=>t.stop()); v.srcObject=null; }
+  cancelAnimationFrame(raf);
+}
+function congela(){
+  if(!esVivo()) return;
+  const v=S.src.el, c=document.createElement("canvas");
+  c.width=S.src.w; c.height=S.src.h;
+  c.getContext("2d").drawImage(v,0,0);
+  const t=tiltLeido(), r=rollLeido();
+  if(t!==null) S.med.phiManual=+t.toFixed(2);
+  if(r!==null) S.med.rollManual=+r.toFixed(2);
+  cierraCamara();
+  S.src={kind:"img", el:c, w:c.width, h:c.height};
+  guarda(); pinta();
+}
+
+/* ------------------------------------------------------------- lienzo */
+const cv=$("#cv"); const ctx=cv.getContext("2d");
+let W=0,H=0;
+function mide(){
+  const r=$("#lienzo").getBoundingClientRect(), dpr=Math.min(devicePixelRatio||1,2.5);
+  cv.width=Math.round(r.width*dpr); cv.height=Math.round(r.height*dpr);
+  W=r.width; H=r.height; ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+function encaja(){
+  if(!S.src) return;
+  const s=Math.min(W/S.src.w, H/S.src.h);
+  S.view={s, tx:(W-S.src.w*s)/2, ty:(H-S.src.h*s)/2, fit:s};
+}
+const aPan = (ix,iy) => ({x:S.view.tx+ix*S.view.s, y:S.view.ty+iy*S.view.s});
+const aImg = (px,py) => ({x:(px-S.view.tx)/S.view.s, y:(py-S.view.ty)/S.view.s});
+const centroImg = () => aImg(W/2,H/2);
+const dentro = () => { const c=centroImg(); return S.src && c.x>=0 && c.y>=0 && c.x<=S.src.w && c.y<=S.src.h; };
+function limita(){
+  const v=S.view, iw=S.src.w*v.s, ih=S.src.h*v.s;
+  v.tx=Math.min(W/2, Math.max(W/2-iw, v.tx));
+  v.ty=Math.min(H/2, Math.max(H/2-ih, v.ty));
+}
+function limpiaMarcas(){
+  S.marks.origen=null;
+  S.marks.puntos.forEach(p=>{p.x=null;p.y=null;});
+  S.sel=-1;
+}
+
+function dibuja(){
+  ctx.clearRect(0,0,W,H);
+  if(!S.src){ pintaNivel(); return; }
+  ctx.imageSmoothingEnabled = S.view.s<1;
+  ctx.drawImage(S.src.el, S.view.tx, S.view.ty, S.src.w*S.view.s, S.src.h*S.view.s);
+  const g=geom();
+  if(g && S.marks.origen){
+    if(S.med.horiz) horizontales(g);
+    if(S.reticula) reticula(g);
+    if(S.med.obliq) oblicuas(g);
+    marca(S.marks.origen, "#f0883e", "ORIGEN", S.sel===-1);
+  }
+  S.marks.puntos.forEach((q,i)=>{ if(q.y!==null) marca(q, COL[i%COL.length], String(i+1), S.sel===i); });
+  cruz();
+  pintaNivel();
+}
+function marca(q,col,lab,act){
+  const g=geom(), rl=rollUsado(), tg=(rl===null||!g)?0:Math.tan(rl*Math.PI/180);
+  const p=aPan(q.x,q.y), yEn=x=>p.y+(x-p.x)*tg;
+  if(Math.max(yEn(0),yEn(W))<-20 || Math.min(yEn(0),yEn(W))>H+20) return;
+  ctx.strokeStyle=col; ctx.lineWidth=act?2.4:1.5; ctx.setLineDash(act?[]:[7,5]);
+  ctx.beginPath(); ctx.moveTo(0,yEn(0)); ctx.lineTo(W,yEn(W)); ctx.stroke(); ctx.setLineDash([]);
+  ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(p.x,p.y-7); ctx.lineTo(p.x,p.y+7); ctx.stroke();
+  ctx.font="600 11px ui-monospace,monospace";
+  const w=ctx.measureText(lab).width, ly=yEn(4+w/2);
+  ctx.fillStyle="rgba(0,0,0,.6)"; ctx.fillRect(4,ly-16,w+8,14);
+  ctx.fillStyle=col; ctx.fillText(lab,8,ly-5);
+}
+function lineaMundo(g,v,col,lw,dash,lab){
+  const L=(S.src.w+S.src.h)*2;
+  const q1=g.aImgR(-L,v), q2=g.aImgR(L,v);
+  const a=aPan(q1.x,q1.y), b=aPan(q2.x,q2.y);
+  if(Math.max(a.y,b.y)<-30 || Math.min(a.y,b.y)>H+30) return;
+  ctx.strokeStyle=col; ctx.lineWidth=lw; ctx.setLineDash(dash);
+  ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); ctx.setLineDash([]);
+  if(!lab) return;
+  const yEn=x=>a.y+(b.y-a.y)*(x-a.x)/((b.x-a.x)||1);
+  ctx.font="600 11px ui-monospace,monospace";
+  const w=ctx.measureText(lab).width, px=W-w-14, py=yEn(px+w/2);
+  ctx.fillStyle="rgba(0,0,0,.6)"; ctx.fillRect(px,py-16,w+8,14);
+  ctx.fillStyle=col; ctx.fillText(lab,px+4,py-5);
+}
+function horizontales(g){
+  const d=+S.med.d; if(!d) return;
+  const ro=g.r(S.marks.origen.y,S.marks.origen.x);
+  for(const Hv of lista(S.med.alturas))
+    lineaMundo(g, g.yDe(ro+Hv/d)-g.y0, "#39c5cf", 1.4, [10,4], fmtEtiq(Hv)+" m");
+}
+function reticula(g){
+  const d=+S.med.d, hn=+S.med.hNom, tol=+S.med.tol;
+  if(!hn||!d) return;
+  const ro=g.r(S.marks.origen.y,S.marks.origen.x);
+  [[hn,"#8b949e","nominal"],[hn*(1+tol/100),"#f85149","+"+fmt(tol,0)+"%"],
+   [hn*(1-tol/100),"#f85149","−"+fmt(tol,0)+"%"]].forEach(([hv,col,lab])=>
+    lineaMundo(g, g.yDe(ro+hv/d)-g.y0, col, lab==="nominal"?1:1.8,
+               lab==="nominal"?[3,6]:[], lab+"  "+fmtEtiq(hv)+" m"));
+}
+function oblicuas(g){
+  const d=+S.med.d; if(!d) return;
+  const xo=S.marks.origen.x; if(xo===null||xo===undefined) return;
+  const ro=g.r(S.marks.origen.y,xo), uo=g.uDe(S.marks.origen.y,xo);
+  const A=uo*(ro*Math.sin(g.phi)+Math.cos(g.phi))/g.f;
+  const cols=["#bc8cff","#39c5cf","#f778ba","#d29922"];
+  ctx.font="600 11px ui-monospace,monospace";
+  traza(g,ro,A,0,"rgba(255,255,255,.45)",null);
+  lista(S.med.angulos).forEach((a,k)=>{
+    const col=cols[k%cols.length];
+    traza(g,ro,A,+a,col,a+"°"); traza(g,ro,A,-a,col,null);
+  });
+}
+function traza(g,ro,A,ang,col,lab){
+  const tg=Math.tan(ang*Math.PI/180), sp=Math.sin(g.phi), cp=Math.cos(g.phi);
+  ctx.strokeStyle=col; ctx.lineWidth=ang===0?1:1.6; ctx.setLineDash(ang===0?[4,6]:[]);
+  ctx.beginPath();
+  let prim=true, ult=null;
+  for(let t=0;t<=4;t+=0.01){
+    const r=ro+t, den=r*sp+cp; if(den<=0.02) break;
+    const q=g.aImgR(g.f*(A+t*tg)/den, g.yDe(r)-g.y0), p=aPan(q.x,q.y);
+    if(p.y<-80) break;
+    if(prim){ ctx.moveTo(p.x,p.y); prim=false; } else ctx.lineTo(p.x,p.y);
+    ult=p;
+  }
+  ctx.stroke(); ctx.setLineDash([]);
+  if(lab&&ult){ ctx.fillStyle=col; ctx.fillText(lab, ult.x+5, ult.y+12); }
+}
+function cruz(){
+  const x=W/2, y=H/2;
+  ctx.strokeStyle="rgba(255,255,255,.9)"; ctx.lineWidth=1.3;
+  ctx.beginPath();
+  ctx.moveTo(x-34,y); ctx.lineTo(x-9,y); ctx.moveTo(x+9,y); ctx.lineTo(x+34,y);
+  ctx.moveTo(x,y-34); ctx.lineTo(x,y-9); ctx.moveTo(x,y+9); ctx.lineTo(x,y+34);
+  ctx.stroke();
+  ctx.strokeStyle="#4493f8"; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.arc(x,y,4,0,7); ctx.stroke();
+}
+
+/* Los sensores a la vista: es el motivo principal de esta pantalla.
+   Se muestra la LECTURA respecto al plomo, no el ángulo del eje óptico,
+   porque lo que el operador puede corregir mientras apunta es cómo
+   sujeta el móvil. */
+function pintaNivel(){
+  const t=tiltLeido(), r=rollLeido();
+  const colR = r===null?"var(--dim)"
+    : Math.abs(r)<=ROLL_OK?"var(--ok)":(Math.abs(r)<=ROLL_AVISO?"var(--warn)":"var(--bad)");
+  const fij = esVivo()?"":" ⏸";
+  $("#nivel").innerHTML =
+    `<div>frontal <span class="v">${t===null?"—":(t>=0?"+":"")+fmt(t,2)+"°"}</span>${fij}</div>`+
+    `<div style="color:${colR}">lateral <span class="v">${r===null?"—":(r>=0?"+":"")+fmt(r,2)+"°"}</span></div>`;
+}
+
+/* ------------------------------------------------------------- gestos */
+let pts=new Map(), d0=0, s0=1, c0=null;
+cv.addEventListener("pointerdown",e=>{ cv.setPointerCapture(e.pointerId);
+  pts.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(pts.size===2){ const [a,b]=[...pts.values()];
+    d0=Math.hypot(a.x-b.x,a.y-b.y); s0=S.view.s; c0={x:(a.x+b.x)/2,y:(a.y+b.y)/2}; }});
+cv.addEventListener("pointermove",e=>{
+  if(!pts.has(e.pointerId)||!S.src) return;
+  const prev=pts.get(e.pointerId); pts.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(pts.size===1){ S.view.tx+=e.clientX-prev.x; S.view.ty+=e.clientY-prev.y; limita(); dibuja(); }
+  else if(pts.size===2&&c0){
+    const [a,b]=[...pts.values()], d=Math.hypot(a.x-b.x,a.y-b.y);
+    const s=Math.max(S.view.fit*0.5, Math.min(S.view.fit*60, s0*d/(d0||1)));
+    const r=cv.getBoundingClientRect(), cx=c0.x-r.left, cy=c0.y-r.top;
+    const im=aImg(cx,cy); S.view.s=s;
+    S.view.tx=cx-im.x*s; S.view.ty=cy-im.y*s; limita(); dibuja(); pinta();
+  }});
+["pointerup","pointercancel"].forEach(ev=>cv.addEventListener(ev,e=>{ pts.delete(e.pointerId); if(pts.size<2) c0=null; }));
+
+/* -------------------------------------------------------------- panel */
+function pinta(){
+  if(!W) mide();
+  if(S.src && !esVivo()) dibuja();
+  let h="";
+  const p=perfil(), pA=perfilDeCamara(S.camaraId);
+
+  /* --- cámara --- */
+  h += `<h2>Cámara</h2>`;
+  if(!S.camaras.length){
+    h += `<div class="ver v-no">No hay ninguna cámara definida.</div>
+    <div class="nota">Las cámaras y sus calibraciones se crean en la versión completa. Allí se define la cámara,
+    se captura una pared con marcas de altura conocida y se calibra. Aquí solo se elige y se mide.</div>
+    <div class="bt"><button class="p" onclick="location.href='visor.html'">Abrir la versión completa</button></div>`;
+  } else {
+    h += `<div class="row"><label>Cámara</label><select id="cam">
+      ${S.camaras.map(c=>`<option value="${c.id}"${c.id===S.camaraId?" selected":""}>${c.nombre}${
+        perfilDeCamara(c.id)?"":" · sin calibrar"}</option>`).join("")}
+    </select></div>`;
+    if(!pA) h += `<div class="ver v-no">Esta cámara no está calibrada: las alturas serían falsas.</div>
+      <div class="bt"><button class="p" onclick="location.href='visor.html'">Calibrarla en la versión completa</button></div>`;
+    h += `<div class="bt">
+      ${esVivo()?'<button id="bFre">Congelar</button><button id="bCie">Cerrar</button>'
+                :'<button class="p" id="bAbr">Abrir cámara</button>'}
+    </div>`;
+    if(S.liveErr) h += `<div class="ver v-no">${S.liveErr}</div>`;
+    if(S.camDistinta) h += `<div class="ver v-no">El navegador ha abierto otra lente distinta de la guardada. No midas así.</div>`;
+    if(esVivo() && pA && pA.w && (pA.w!==S.src.w || pA.h!==S.src.h))
+      h += `<div class="ver v-na">La cámara abre a ${S.src.w}×${S.src.h} y se calibró a ${pA.w}×${pA.h}.</div>`;
+  }
+
+  /* --- ensayo --- */
+  const ENS=ensayosLee(), eAct=S.med.ensayoId?ensayoPorId(S.med.ensayoId):null;
+  const sug=distanciaSugerida(eAct);
+  const Hn=+S.med.hNom, dAct=+S.med.d;
+  const angV=anguloVertical(Hn,dAct), dEnc=distanciaEncuadre(Hn, p?p.fRel:null);
+  h += `<h2>Ensayo</h2>
+  <div class="row"><label>Configuración</label><select id="ens">
+    <option value="">— ninguna —</option>
+    ${ENS.map(e=>`<option value="${e.id}"${e.id===S.med.ensayoId?" selected":""}>${e.nombre}${
+      e.hNom?" · "+fmtEtiq(+e.hNom)+" m ±"+fmt(+e.tol,0)+" %":""}</option>`).join("")}
+  </select></div>
+  <div class="row"><label>Distancia</label><input type="number" step="0.01" id="iD" value="${S.med.d}"><span class="u">m</span></div>
+  ${sug?`<div class="bt"><button class="mini" id="usaD">Usar ${fmtEtiq(sug.d)} m${
+    sug.origen==="calculada"?" (sugerida)":""}</button></div>`:""}
+  ${(Hn&&dAct)?`<div class="nota">Altura declarada ${fmtEtiq(Hn)} m ± ${fmt(+S.med.tol,0)} % ·
+    ángulo vertical <b style="color:${angV>ANG_MAX?"var(--bad)":(angV<25||angV>55?"var(--warn)":"var(--ok)")}">${fmt(angV,0)}°</b></div>
+  ${angV>ANG_MAX?`<div class="ver v-no">Ángulo vertical de ${fmt(angV,0)}°, por encima de 60°. Aléjate.</div>`:""}
+  ${(dEnc&&dAct<dEnc)?`<div class="ver v-no">A esta distancia el disparo y la altura declarada no caben en el mismo fotograma.</div>`:""}`:""}`;
+
+  /* --- marcas --- */
+  if(S.src){
+    const R=medidas();
+    h += `<h2>Marcas</h2>
+    <div class="bt">
+      <button class="${S.sel===-1?"p":""}" id="selO">Origen</button>
+      ${S.marks.puntos.map((q,i)=>`<button class="mini ${S.sel===i?"p":""} selP" data-i="${i}">${i+1}</button>`).join("")}
+      <button class="mini" id="masP">+</button>
+    </div>
+    <div class="bt"><button class="g" id="fijar" ${dentro()?"":"disabled"}>Fijar ${
+      S.sel===-1?"el origen":"el punto "+(S.sel+1)}</button></div>
+    ${S.marks.origen?"":'<div class="nota">Pon la cruz sobre el punto de disparo y fija el origen. Las alturas se miden desde ahí.</div>'}
+    <table><tr><th>Marca</th><th style="text-align:right">Altura</th><th style="text-align:right">±</th></tr>
+    ${S.marks.puntos.map((q,i)=>{
+      const x=R?R[i]:null;
+      return `<tr><td><input type="text" class="lab" data-i="${i}" value="${(q.lab||"").replace(/"/g,"&quot;")}"
+        style="font:13.5px inherit;padding:6px 8px"></td>
+        <td class="n">${x&&x.y!==null?fmtH(x.H)+" m":"—"}</td>
+        <td class="u">${x&&x.y!==null?fmtH(x.U):""}</td></tr>`;}).join("")}
+    </table>`;
+    if(R){
+      const hechos=R.filter(x=>x.y!==null);
+      if(hechos.length && Hn && isFinite(Hn) && Hn>0){
+        const may=hechos.reduce((a,b)=>Math.abs(b.dH)>Math.abs(a.dH)?b:a);
+        const lo=Hn*(1-S.med.tol/100), hi=Hn*(1+S.med.tol/100), v=may.H;
+        const seguro=(v-may.U)>=lo && (v+may.U)<=hi, fuera=(v+may.U)<lo || (v-may.U)>hi;
+        h += `<div class="ver ${seguro?"v-ok":(fuera?"v-no":"v-na")}">${
+          seguro ? "Dentro de "+fmtEtiq(lo)+" – "+fmtEtiq(hi)+" m"
+          : fuera ? "Fuera de "+fmtEtiq(lo)+" – "+fmtEtiq(hi)+" m"
+          : "En el límite de "+fmtEtiq(lo)+" – "+fmtEtiq(hi)+" m: el resultado depende de la regla de decisión"}</div>`;
+      }
+    }
+  }
+
+  /* --- informe --- */
+  if(S.src && S.marks.origen){
+    h += `<h2>Informe</h2>
+    <div class="row"><label>Nº de ensayo</label><input type="text" id="eNum" value="${(S.med.nEns||"").replace(/"/g,"&quot;")}"></div>
+    <div class="row"><label>Artículo</label><input type="text" id="eRef" value="${(S.med.ref||"").replace(/"/g,"&quot;")}"></div>
+    <div class="row"><label>Lote</label><input type="text" id="eLote" value="${(S.med.lote||"").replace(/"/g,"&quot;")}"></div>
+    <div class="bt">
+      <button class="p" id="inf">Generar</button>
+      <button id="desc">Descargar</button>
+    </div>
+    <textarea id="infTxt" readonly placeholder="El informe aparece aquí"></textarea>`;
+  }
+
+  $("#pan").innerHTML=h;
+  ata();
+  $("#aviso").style.display="none";
+}
+
+function ata(){
+  const on=(id,ev,fn)=>{ const el=$("#"+id); if(el) el.addEventListener(ev,fn); };
+  on("cam","change",async e=>{ cierraCamara(); S.camaraId=e.target.value; guarda();
+    const a=perfilDeCamara(S.camaraId); if(a){ S.perfilId=a.id; guarda(); } await abreCamara(S.camaraId); });
+  on("bAbr","click",()=>abreCamara(S.camaraId));
+  on("bFre","click",congela);
+  on("bCie","click",()=>{ cierraCamara(); S.src=null; pinta(); });
+  on("iD","change",e=>{ S.med.d=+e.target.value||0; guarda(); pinta(); });
+  on("ens","change",e=>{
+    const id=e.target.value;
+    if(!id){ S.med.ensayoId=""; S.med.ensayoNom=""; guarda(); pinta(); return; }
+    aplicaEnsayo(ensayoPorId(id)); guarda(); pinta();
+  });
+  on("usaD","click",()=>{
+    const s=distanciaSugerida(ensayoPorId(S.med.ensayoId)); if(!s) return;
+    if(!confirm("¿Poner "+fmtEtiq(s.d)+" m como distancia?\n\n"
+      +(s.origen==="calculada"?"Es una sugerencia de encuadre, no una medida.":"Es la distancia del ensayo.")
+      +"\n\nLa que vale en un informe es la que midas en campo.")) return;
+    S.med.d=+s.d.toFixed(2); guarda(); pinta();
+  });
+  on("selO","click",()=>{ S.sel=-1; pinta(); });
+  $$(".selP").forEach(el=>el.addEventListener("click",e=>{ S.sel=+e.target.dataset.i; pinta(); }));
+  on("masP","click",()=>{ S.marks.puntos.push({lab:"",x:null,y:null,hReal:null});
+    S.sel=S.marks.puntos.length-1; pinta(); });
+  on("fijar","click",()=>{
+    if(!dentro()) return;
+    const c=centroImg();
+    if(S.sel===-1) S.marks.origen={x:c.x,y:c.y};
+    else { const q=S.marks.puntos[S.sel]; q.x=c.x; q.y=c.y; }
+    pinta();
+  });
+  $$(".lab").forEach(el=>el.addEventListener("change",e=>{
+    S.marks.puntos[+e.target.dataset.i].lab=e.target.value; }));
+  [["eNum","nEns"],["eRef","ref"],["eLote","lote"]].forEach(([id,k])=>
+    on(id,"change",e=>{ S.med[k]=e.target.value; guarda(); }));
+  on("inf","click",()=>{ const t=$("#infTxt"); t.value=informeEnsayo(); t.select();
+    navigator.clipboard?.writeText(t.value); });
+  on("desc","click",()=>{
+    const txt=informeEnsayo();
+    const nom="ensayo-"+(S.med.nEns||S.med.ref||"sin-referencia").replace(/[^\w.-]+/g,"_")
+      +"-"+new Date().toISOString().slice(0,10)+".md";
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(new Blob([txt],{type:"text/markdown;charset=utf-8"}));
+    a.download=nom; document.body.appendChild(a); a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },1000);
+    $("#infTxt").value=txt;
+  });
+}
+
+/* ------------------------------------------------------------ informe */
+function informeEnsayo(){
+  const R=medidas(), p=perfil(), M=S.med;
+  if(!R||!p) return "No hay medidas que informar.";
+  const hechos=R.filter(x=>x.y!==null);
+  if(!hechos.length) return "No hay ninguna marca fijada.";
+  const d=+M.d, L=[];
+  const fila=(k,v)=>L.push("| "+k+" | "+v+" |");
+  const cab=(...c)=>{ L.push("| "+c.join(" | ")+" |"); L.push("|"+c.map(()=>"---").join("|")+"|"); };
+  const ang=(l,a)=>(l===null?"—":fmt(l,2)+"°")+" (eje óptico "+(a===null?"—":fmt(a,2)+"°")+")";
+  L.push("# Informe de verificación de altura","",
+    "Registro interno de medida. No sustituye a un organismo notificado ni a un laboratorio de ensayo acreditado.","",
+    "## 1. Identificación","");
+  cab("Campo","Valor");
+  fila("Fecha y hora", new Date().toLocaleString("es-ES"));
+  if(M.nEns) fila("Nº de ensayo", M.nEns);
+  if(M.ref) fila("Artículo o referencia", M.ref);
+  if(M.lote) fila("Lote", M.lote);
+  if(M.cat) fila("Categoría", M.cat);
+  if(M.ensayoNom) fila("Configuración de ensayo", M.ensayoNom);
+  fila("Instrumento", "Medida de alturas, versión básica");
+
+  L.push("","## 2. Equipo y trazabilidad","");
+  cab("Campo","Valor");
+  fila("Perfil óptico", p.name);
+  fila("Cámara", p.camaraId?nombreCamara(p.camaraId):"ninguna");
+  fila("Fotograma del ensayo", S.src.w+"×"+S.src.h+" px");
+  fila("Fotograma de la calibración", p.w?(p.w+"×"+p.h+" px"):"sin registrar");
+  fila("Focal relativa a la altura del fotograma", fmt(p.fRel,5));
+  fila("Desalineación δ · frontal", fmt(p.delta,3)+"°");
+  fila("Desalineación δρ · lateral", fmt(+p.deltaRoll||0,3)+"°");
+  if(p.datos){
+    fila("Fecha de la calibración", new Date(p.datos.fecha).toLocaleDateString("es-ES"));
+    fila("Error de ajuste de la calibración", fmt(p.datos.rms,2)+" px");
+  } else fila("Calibración", "el perfil no conserva sus datos de calibración");
+
+  L.push("","## 3. Condiciones de la observación","");
+  cab("Campo","Valor");
+  fila("Distancia de observación", fmt(d,3)+" m");
+  fila("Incertidumbre asignada a la distancia", fmt(+M.ud,2)+" %");
+  fila("Inclinación frontal", ang(tiltLeido(), tiltUsado()));
+  fila("Inclinación lateral", ang(rollLeido(), rollUsado()));
+  fila("Error de marcado asignado", "± "+fmt(+M.upx,1)+" px");
+
+  L.push("","## 4. Resultados","");
+  cab("Marca","Altura medida (m)","U k=2 (m)","U relativa");
+  hechos.forEach((x,i)=>L.push("| "+(x.lab||("marca "+(i+1)))+" | "+fmtH(x.H)+" | "+fmtH(x.U)
+    +" | "+(x.relU===null?"—":fmt(x.relU,2)+" %")+" |"));
+
+  const may=hechos.reduce((a,b)=>Math.abs(b.dH)>Math.abs(a.dH)?b:a);
+  L.push("","## 5. Presupuesto de incertidumbre","",
+    "Contribuciones a la marca de mayor altura ("+(may.lab||"sin etiqueta")+", "+fmtH(may.dH)+" m), en metros.","");
+  cab("Contribución","Valor (m)");
+  fila("Distancia de observación", fmtH(may.comp.cDist));
+  fila("Focal del perfil", fmtH(may.comp.cF));
+  fila("Inclinación frontal", fmtH(may.comp.cPhi));
+  fila("Marcado del origen", fmtH(may.comp.cPo));
+  fila("Marcado del punto", fmtH(may.comp.cPt));
+  fila("Separación lateral con inclinación lateral", fmtH(may.comp.cRoll));
+  fila("Incertidumbre típica combinada", fmtH(may.uc));
+  fila("Incertidumbre expandida U (k = 2)", fmtH(may.U));
+
+  L.push("","## 6. Criterio y resultado","");
+  const hn=+M.hNom, tol=+M.tol;
+  if(hn && isFinite(hn) && hn>0){
+    const lo=hn*(1-tol/100), hi=hn*(1+tol/100), v=may.H;
+    const seguro=(v-may.U)>=lo && (v+may.U)<=hi, fuera=(v+may.U)<lo || (v-may.U)>hi;
+    cab("Campo","Valor");
+    fila("Altura declarada", fmtH(hn)+" m");
+    fila("Tolerancia aplicada", "± "+fmt(tol,0)+" %");
+    fila("Intervalo admisible", fmtH(lo)+" m a "+fmtH(hi)+" m");
+    fila("Altura medida", fmtH(v)+" m");
+    fila("Incertidumbre expandida", "± "+fmtH(may.U)+" m (k = 2)");
+    L.push("");
+    L.push(seguro
+      ? "El intervalo medido ± U queda **íntegramente dentro** del intervalo admisible: conforme con cualquier regla de decisión."
+      : fuera
+      ? "El intervalo medido ± U queda **íntegramente fuera** del intervalo admisible: no conforme con cualquier regla de decisión."
+      : "El intervalo medido ± U **cruza el límite**. El resultado depende de la regla de decisión acordada: con "
+        +"aceptación simple sería "+((v>=lo&&v<=hi)?"conforme":"no conforme")+"; con banda de guarda de una "
+        +"incertidumbre expandida, no puede declararse la conformidad. La regla la fija el criterio acordado, no el instrumento.");
+  } else {
+    L.push("No se ha declarado altura nominal, así que no se emite juicio de conformidad.");
+  }
+
+  if(M.obs) L.push("","### Observaciones","",M.obs);
+  L.push("","## 7. Limitaciones y salvedades","",
+    "1. La altura se obtiene como fracción de la distancia de observación: todo error en esa distancia se traslada",
+    "   proporcionalmente al resultado. La distancia debe medirse, no estimarse.",
+    "2. El método supone que el punto de disparo y el punto medido están a la misma distancia horizontal de la cámara.",
+    "3. El presupuesto no cubre errores groseros: origen mal fijado, perfil que no corresponde al objetivo usado, o",
+    "   un punto de altura máxima que no se aprecie con nitidez.",
+    "4. La incertidumbre declarada supone que la calibración del objetivo sigue siendo válida.",
+    "5. Instrumento de verificación interna. No sustituye el dictamen de un organismo notificado ni el ensayo en",
+    "   laboratorio acreditado.","");
+  return L.join("\n");
+}
+
+/* ------------------------------------------------------------ arranque */
+addEventListener("resize",()=>{ mide(); if(S.src) encaja(); dibuja(); });
+mide(); pinta(); dibuja();
+setInterval(()=>{ if(!esVivo()) pintaNivel(); },250);
+if(!SENS.on) activaSensores();
+</script>
+</body>
+</html>

@@ -126,6 +126,8 @@ a{color:var(--acc)}
   <option>Apogeo de la trayectoria</option>
 </datalist>
 
+<script src="modelo.js"></script>
+<script src="ensayos.js"></script>
 <script>
 "use strict";
 const $ = s => document.querySelector(s);
@@ -167,7 +169,8 @@ const S = {
   med: JSON.parse(localStorage.getItem("vpd.med")||"null") || {
     d:100, ud:1.0, hRef:0, tol:20, upx:3, uphi:0.3, phiManual:"", rollManual:"",
     obliq:false, angulos:"15, 30", horiz:false, alturas:"20, 30",
-    ref:"", lote:"", cat:"", nEns:"", operador:"", lugar:"", obs:""
+    ref:"", lote:"", cat:"", nEns:"", operador:"", lugar:"", obs:"",
+    ensayoId:"", ensayoNom:""
   },
   src:null,
   marks:{ origen:null, puntos:[{lab:"Altura de funcionamiento", x:null, y:null, hReal:null}] },
@@ -400,7 +403,7 @@ const ROLL_OK = 1.0, ROLL_AVISO = 3.0;
    lectura de inclinación lateral sale de atan2(gx,gy) y el redondeo del acelerómetro a
    0,1 m/s² se traduce en 0,1/9,8 rad ≈ 0,6°. Si no hay ninguna lectura de
    inclinación lateral (foto de un tercero sin dato), se presupuesta el límite de aviso. */
-const U_ROLL = 0.6, U_ROLL_DESC = ROLL_AVISO;
+const U_ROLL_DESC = ROLL_AVISO;   // U_ROLL lo define modelo.js
 /* δ y δρ son desalineaciones MECÁNICAS entre el acelerómetro y el sensor de
    imagen: décimas de grado. Un valor grande no es una desalineación, es una
    calibración mal hecha, casi siempre por una de estas dos causas: no se
@@ -432,82 +435,8 @@ function desajustePerfil(){
   if(Math.abs(aP-aS)/aP>0.02) return {aP,aS,pw:p.w,ph:p.h};
   return null;
 }
-/* Inclinación lateral y perspectiva.
-
-   Dos efectos distintos hacen que una vertical del mundo NO caiga sobre una
-   columna de la imagen, y conviene no confundirlos:
-
-   1) BALANCEO (ρ). Si el móvil está girado sobre su eje óptico, toda la imagen
-      gira ρ. Se corrige girando las coordenadas −ρ en torno al centro óptico,
-      que es lo que hace yEf: devuelve la fila que tendría el punto con la
-      imagen puesta a plomo. Así la inclinación lateral deja de ser un error que haya que
-      presupuestar y pasa a ser una corrección.
-
-   2) PERSPECTIVA (convergencia de verticales). Aun a plomo perfecto, una
-      vertical del mundo solo se proyecta sobre una columna constante si pasa
-      por el centro óptico. Fuera de él, la columna es
-          x − x₀ = f·(a/d) / (r·sen φ + cos φ)
-      es decir, se separa del centro al acercarse al horizonte. Sigue siendo
-      una RECTA, pero inclinada. Es el efecto de las fachadas que convergen al
-      fotografiarlas desde abajo, y no es un defecto del equipo.
-
-   Ninguno de los dos altera la FILA de un punto por sí mismo: con inclinación frontal pura
-   la fila depende solo de la altura y la distancia, no de la posición lateral.
-   Por eso una vertical que no cuadre no invalida las alturas medidas.        */
-function geom(){
-  const p = perfil(), src = S.src;
-  if (!src || !p) return null;
-  const f = p.fRel*src.h, y0 = p.y0Rel*src.h, x0 = src.w/2;
-  const phi = (tiltUsado() ?? 0)*Math.PI/180;
-  const rho = (rollUsado() ?? 0)*Math.PI/180;
-  const cR = Math.cos(rho), sR = Math.sin(rho);
-  /* coordenadas a plomo (u lateral, v fila) ← imagen */
-  const uDe = (y,x) => ((x==null?x0:x)-x0)*cR + (y-y0)*sR;
-  const vDe = (y,x) => -((x==null?x0:x)-x0)*sR + (y-y0)*cR;
-  const yEf = (y,x) => y0 + vDe(y,x);
-  /* imagen ← coordenadas a plomo */
-  const aImgR = (u,v) => ({x: x0 + u*cR - v*sR, y: y0 + u*sR + v*cR});
-  const r  = (y,x) => Math.tan(Math.atan(-vDe(y,x)/f) + phi);
-  const yDe = rr => y0 - f*Math.tan(Math.atan(rr) - phi);   // fila a plomo
-  return {f, y0, x0, phi, rho, cR, sR, r, yDe, yEf, uDe, vDe, aImgR};
-}
-function medidas(){
-  const g = geom(); if (!g || S.marks.origen===null) return null;
-  const p = perfil(), d = +S.med.d, yo = S.marks.origen.y, xo = S.marks.origen.x;
-  const phi0 = tiltUsado() ?? 0;
-  const roll = rollUsado();
-  const con = (fv,y0v,phiv,dv,yov,ytv)=>{
-    const rr = y => Math.tan(Math.atan((y0v-y)/fv) + phiv*Math.PI/180);
-    return (rr(ytv)-rr(yov))*dv;
-  };
-  const yoE = g.yEf(yo,xo);
-  const ro = g.r(yo,xo);
-  return S.marks.puntos.map(q=>{
-    if (q.y===null) return {lab:q.lab, y:null};
-    const ytE = g.yEf(q.y,q.x);
-    const rt = g.r(q.y,q.x), dr = rt-ro, dH = dr*d;
-    const base = con(g.f,g.y0,phi0,d,yoE,ytE);
-    const cDist = Math.abs(dH)*(+S.med.ud)/100;
-    const cF    = Math.abs(con(g.f*(1+(+p.uF)/100),g.y0,phi0,d,yoE,ytE)-base);
-    const cPhi  = Math.abs(con(g.f,g.y0,phi0+(+S.med.uphi),d,yoE,ytE)-base);
-    const upx   = +S.med.upx;
-    const cPo   = Math.abs(con(g.f,g.y0,phi0,d,yoE+upx,ytE)-base);
-    const cPt   = Math.abs(con(g.f,g.y0,phi0,d,yoE,ytE+upx)-base);
-    /* Inclinación lateral. El giro de la imagen YA se corrige en geom(), así que
-       lo que queda aquí no es la inclinación lateral sino su INCERTIDUMBRE: un punto
-       separado Δx del origen arrastra un error (Δx/f)·sen(u_ρ). Se anula
-       exactamente cuando origen y punto quedan en la misma vertical, que
-       sigue siendo la mejor práctica de campo. */
-    const dx = (q.x===null||xo===null) ? null : (q.x-xo);
-    const uRoll = roll===null ? U_ROLL_DESC : U_ROLL;
-    const cRoll = dx===null ? 0
-                : Math.abs(dx/g.f*Math.sin(uRoll*Math.PI/180))*d;
-    const uc = Math.hypot(cDist,cF,cPhi,cPo,cPt,cRoll), U = 2*uc;
-    return {lab:q.lab, y:q.y, x:q.x, hReal:q.hReal, dx, ro, rt, dr, dH, H:dH+(+S.med.hRef||0), uc, U,
-            comp:{cDist,cF,cPhi,cPo,cPt,cRoll},
-            relU: Math.abs(dH)>1e-9 ? 100*U/Math.abs(dH) : null};
-  });
-}
+/* El modelo de medida (geom y medidas) está en modelo.js, compartido con
+   basico.html para que las dos páginas no puedan dar números distintos. */
 
 /* ------------------------------------------------------------- lienzo */
 const cv = $("#cv"), ctx = cv.getContext("2d");
@@ -1545,6 +1474,38 @@ function uiMedida(m){
 
   h += navHTML();
 
+  /* --- configuración de ensayo --- */
+  const ENS=ensayosLee(), eAct=S.med.ensayoId?ensayoPorId(S.med.ensayoId):null;
+  const sug=distanciaSugerida(eAct);
+  const fR=perfil()?perfil().fRel:null;
+  const Hn=+S.med.hNom, dAct=+S.med.d;
+  const angV=anguloVertical(Hn,dAct), dEnc=distanciaEncuadre(Hn,fR);
+  h += `<h3>Configuración de ensayo</h3>
+  <div class="row"><label>Ensayo</label><select id="enSel">
+    <option value="">— ninguna —</option>
+    ${ENS.map(e=>`<option value="${e.id}"${e.id===S.med.ensayoId?" selected":""}>${
+      e.nombre}${e.hNom?" · "+fmtEtiq(+e.hNom)+" m ±"+fmt(+e.tol,0)+" %":""}</option>`).join("")}
+  </select></div>
+  <div class="btns">
+    <button id="enNueva">Guardar la actual como…</button>
+    ${eAct?'<button id="enBorra">Borrar la seleccionada</button>':""}
+  </div>
+  ${sug?`<div class="res">
+    <div class="kv"><span>distancia ${sug.origen==="escrita"?"del ensayo":"sugerida"}</span><b>${fmtEtiq(sug.d)} m</b></div>
+    ${sug.origen==="calculada"?`<div class="kv"><span>criterio</span><b>ángulo vertical de ${ANG_OPT}°</b></div>`:""}
+    <div class="btns"><button class="p" id="enUsaD">Usar ${fmtEtiq(sug.d)} m como distancia</button></div>
+  </div>
+  <div class="note">La distancia no se cambia sola: la que vale es la que midas en campo. Esto solo propone un
+  encuadre.${sug.origen==="calculada"?" Sale de un ángulo vertical de "+ANG_OPT+"°, dentro del intervalo de 30° a 50° que la EN 16261-3, 6.10.3, señala como óptimo, con el límite en 60°.":""}</div>`:""}
+  ${(Hn&&dAct)?`<div class="res">
+    <div class="kv"><span>ángulo vertical a ${fmtEtiq(dAct)} m</span><b style="color:${
+      angV>ANG_MAX?"var(--bad)":(angV<25||angV>55?"var(--warn)":"var(--ok)")}">${fmt(angV,0)}°</b></div>
+    ${dEnc?`<div class="kv"><span>distancia mínima para que quepa</span><b style="color:${
+      dAct<dEnc?"var(--bad)":"var(--ok)"}">${fmtEtiq(dEnc)} m</b></div>`:""}
+  </div>
+  ${angV>ANG_MAX?`<div class="verdict v-no">Ángulo vertical de ${fmt(angV,0)}°: por encima de los 60° que admite la EN 16261-3, 6.10.3. Aléjate.</div>`:""}
+  ${(dEnc&&dAct<dEnc)?`<div class="verdict v-no">A esta distancia el punto de disparo y la altura declarada no caben en el mismo fotograma.</div>`:""}`:""}`;
+
   /* --- retícula --- */
   h += `<h3>Referencias sobre la imagen</h3>
   <div class="row"><label>Altura declarada</label><input type="number" step="0.1" id="iHnom" value="${S.med.hNom??""}"><span class="u">m</span></div>
@@ -2071,6 +2032,7 @@ function informeEnsayo(){
   if(M.ref) fila("Artículo o referencia", M.ref);
   if(M.lote) fila("Lote", M.lote);
   if(M.cat) fila("Categoría", M.cat);
+  if(M.ensayoNom) fila("Configuración de ensayo", M.ensayoNom);
   if(M.lugar) fila("Lugar", M.lugar);
   if(M.operador) fila("Operador", M.operador);
   fila("Origen de la imagen", S.src ? ({live:"cámara en vivo", img:"imagen fija", video:"vídeo"}[S.src.kind]||S.src.kind) : "—");
@@ -2459,6 +2421,33 @@ function enlaza(){
     const el=$("#"+id); if(!el) return;
     el.addEventListener("change",()=>{ S.med[k]=el.value; guarda(); });
   });
+  on("enSel","change",e=>{
+    const id=e.target.value;
+    if(!id){ S.med.ensayoId=""; S.med.ensayoNom=""; guarda(); pinta(); return; }
+    aplicaEnsayo(ensayoPorId(id)); guarda(); pinta();
+  });
+  on("enNueva","click",()=>{
+    const nom=prompt("Nombre de la configuración:\n\nSe guarda lo que hay ahora en pantalla: altura declarada,\n"
+      +"tolerancia, oblicuas y alturas de referencia.", S.med.ref||S.med.ensayoNom||"");
+    if(!nom) return;
+    const L=ensayosLee(); L.push(ensayoDesdeEstado(nom)); ensayosGuarda(L);
+    S.med.ensayoId=L[L.length-1].id; S.med.ensayoNom=nom; guarda(); pinta();
+  });
+  on("enBorra","click",()=>{
+    const e=ensayoPorId(S.med.ensayoId); if(!e) return;
+    if(!confirm("¿Borrar la configuración «"+e.nombre+"»?\n\nNo afecta a ninguna medida ya hecha.")) return;
+    ensayosGuarda(ensayosLee().filter(q=>q.id!==e.id));
+    S.med.ensayoId=""; S.med.ensayoNom=""; guarda(); pinta();
+  });
+  on("enUsaD","click",()=>{
+    const sug=distanciaSugerida(ensayoPorId(S.med.ensayoId)); if(!sug) return;
+    if(!confirm("¿Poner "+fmtEtiq(sug.d)+" m como distancia de observación?\n\n"
+      +(sug.origen==="calculada"
+        ? "Es una sugerencia de encuadre calculada de la altura declarada, no una medida."
+        : "Es la distancia escrita en la configuración del ensayo.")
+      +"\n\nLa distancia que vale en un informe es la que midas en campo.")) return;
+    S.med.d=+sug.d.toFixed(2); guarda(); pinta();
+  });
   on("eInf","click",()=>{ const t=$("#eInfTxt"); if(!t) return;
     t.value=informeEnsayo(); t.select(); navigator.clipboard?.writeText(t.value); });
   on("eDesc","click",()=>{
@@ -2634,7 +2623,7 @@ function enlaza(){
     S.capturas=[];
     S.perfiles=[]; S.perfilId="";
     S.med={d:100, ud:1.0, hRef:0, tol:20, upx:3, uphi:0.3, phiManual:"", rollManual:"",
-      ref:"", lote:"", cat:"", nEns:"", operador:"", lugar:"", obs:"",
+      ref:"", lote:"", cat:"", nEns:"", operador:"", lugar:"", obs:"", ensayoId:"", ensayoNom:"",
            obliq:false, angulos:"15, 30", horiz:false, alturas:"20, 30"};
     S.srcCamId=""; localStorage.removeItem("vpd.camId");
     S.calib={puntos:[], d:100, hCam:0, sensor:"", sensorRoll:"", out:null, tipo:"phi", camId:"", origen:"", capId:""};
