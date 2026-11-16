@@ -173,7 +173,11 @@ const guarda = () => {
   localStorage.setItem("vpd.perfilId", S.perfilId);
   localStorage.setItem("vpd.med", JSON.stringify(S.med));
 };
-const perfil = () => S.perfiles.find(p=>p.id===S.perfilId) || S.perfiles[0];
+/* Puede no haber ningún perfil. Antes se reponía uno de fábrica para que la
+   aplicación siguiera calculando, y eso es justo lo peligroso: un perfil que
+   no corresponde a la cámara produce un error de escala constante que no
+   avisa de su presencia. Sin perfil, la aplicación se niega a dar alturas. */
+const perfil = () => S.perfiles.find(p=>p.id===S.perfilId) || S.perfiles[0] || null;
 /* Factor de zoom del objetivo, deducido de la focal calibrada. Ninguna API lo
    facilita, pero f dividida por la diagonal del fotograma es invariante frente
    al recorte y comparable entre fuentes de distinta relación de aspecto.
@@ -296,9 +300,10 @@ const esVivo = () => !!(S.src && S.src.kind==="live");
 const vacio  = v => v===""||v===null||v===undefined||!isFinite(+v);
 
 function tiltUsado(){
-  if (esVivo()){ const m=media().p; return m===null?null:m+perfil().delta; }
+  const dl = perfil()?perfil().delta:0;
+  if (esVivo()){ const m=media().p; return m===null?null:m+dl; }
   if (vacio(S.med.phiManual)) return 0;          // a plomo supuesto, se avisa
-  return +S.med.phiManual + perfil().delta;
+  return +S.med.phiManual + dl;
 }
 function phiSupuesto(){ return !esVivo() && vacio(S.med.phiManual); }
 function rollUsado(){
@@ -326,14 +331,14 @@ function semaforoRoll(r){
 function desajustePerfil(){
   if(!S.src) return null;
   const p=perfil();
-  if(!p.w||!p.h) return null;
+  if(!p||!p.w||!p.h) return null;
   const aP=p.w/p.h, aS=S.src.w/S.src.h;
   if(Math.abs(aP-aS)/aP>0.02) return {aP,aS,pw:p.w,ph:p.h};
   return null;
 }
 function geom(){
   const p = perfil(), src = S.src;
-  if (!src) return null;
+  if (!src || !p) return null;
   const f = p.fRel*src.h, y0 = p.y0Rel*src.h;
   const phi = (tiltUsado() ?? 0)*Math.PI/180;
   const r = y => Math.tan(Math.atan((y0-y)/f) + phi);
@@ -938,6 +943,10 @@ function uiMedida(m){
     calibrada de cada objetivo, tomando como ×1 el principal, así que aparece en cuanto calibras ese objetivo.
     Al elegir una cámara con perfil propio, el perfil se activa solo.</div>`;
   }
+  if (!S.perfiles.length) return h + `<div class="verdict v-no" style="text-align:left;font-weight:500">
+    <b>No hay ningún perfil de cámara.</b><br>Sin él no se puede convertir lo que se ve en alturas, así que la
+    aplicación no va a dar ninguna cifra. Ve a <b>Calibración</b> y calibra el objetivo que vayas a usar.</div>`
+    + tecBoton();
   if (!S.src) return h + `<div class="note">Perfil activo: <b>${perfil().name}</b>.</div>` + tecBoton();
 
   const des = desajustePerfil();
@@ -1314,6 +1323,14 @@ function uiCalib(){
 
 function uiAjustes(){
   const p=perfil();
+  if(!p) return `<div class="verdict v-no" style="text-align:left;font-weight:500">
+    <b>No hay ningún perfil.</b><br>La aplicación no dará alturas hasta que calibres un objetivo en la pestaña
+    Calibración. Si quieres recuperar el de fábrica, úsalo solo si mides con foto de 12 MP de un Galaxy S25+.</div>
+    <div class="btns"><button id="aBase">Restaurar el perfil base de fábrica</button></div>
+    <div class="btns"><button id="aImp">Importar perfiles</button></div>
+    <textarea id="aJson" placeholder="Pega aquí un texto de perfiles exportado y pulsa Importar"
+      style="width:100%;min-height:90px;background:#0d1117;color:var(--txt);border:1px solid var(--line);
+      border-radius:6px;padding:8px;font:11.5px ui-monospace,monospace"></textarea>`;
   return `<h3>Perfil activo</h3>
   <div class="row"><label>Perfil</label><select id="aSel">
     ${S.perfiles.map(q=>`<option value="${q.id}"${q.id===S.perfilId?" selected":""}>${q.name}</option>`).join("")}
@@ -1332,6 +1349,7 @@ function uiAjustes(){
     <button id="aDelTodo">Borrar todos los perfiles</button>
     <button id="aCero">Empezar de cero</button>
   </div>
+  <div class="btns"><button id="aBase">Restaurar el perfil base de fábrica</button></div>
   <div class="note"><b>Borrar todos los perfiles</b> deja únicamente el perfil base de fábrica, para que la
   aplicación siga funcionando; no toca las capturas ni los datos de campo.
   <b>Empezar de cero</b> borra además las capturas de calibración guardadas, la distancia y los ángulos de la
@@ -1505,24 +1523,20 @@ function enlaza(){
   on("aDel","click",()=>{
     if(!confirm("¿Borrar el perfil «"+perfil().name+"»?\n\nNo se puede deshacer.")) return;
     S.perfiles=S.perfiles.filter(p=>p.id!==S.perfilId);
-    /* Si se borra el último, se repone el de fábrica: sin ningún perfil la
-       aplicación no puede calcular nada. */
-    if(!S.perfiles.length){ S.perfiles=[Object.assign({},PERFIL_BASE)];
-      alert("Era el último perfil: se repone el perfil base de fábrica."); }
-    S.perfilId=S.perfiles[0].id; guarda(); pinta();
+    S.perfilId=S.perfiles.length?S.perfiles[0].id:""; guarda(); pinta();
+    if(!S.perfiles.length) alert("No queda ningún perfil. La aplicación no dará alturas hasta que calibres un objetivo.");
   });
   on("aDelTodo","click",()=>{
-    if(!confirm("¿Borrar LOS "+S.perfiles.length+" PERFILES?\n\nQuedará solo el perfil base de fábrica.\nNo se puede deshacer.")) return;
-    S.perfiles=[Object.assign({},PERFIL_BASE)]; S.perfilId=S.perfiles[0].id;
-    guarda(); pinta();
+    if(!confirm("¿Borrar LOS "+S.perfiles.length+" PERFILES?\n\nNo quedará ninguno, y la aplicación no dará alturas hasta que calibres un objetivo.\nNo se puede deshacer.")) return;
+    S.perfiles=[]; S.perfilId=""; guarda(); pinta();
   });
   on("aCero","click",async()=>{
-    if(!confirm("EMPEZAR DE CERO\n\nSe borrarán:\n· los "+S.perfiles.length+" perfiles (queda el base de fábrica)\n· las "
+    if(!confirm("EMPEZAR DE CERO\n\nSe borrarán:\n· los "+S.perfiles.length+" perfiles\n· las "
       +S.capturas.length+" capturas de calibración\n· distancia, ángulos y referencias de la última toma\n· la elección de objetivo\n\nNo se puede deshacer. ¿Continuar?")) return;
     for(const c of S.capturas){ if(URLS[c.id]){URL.revokeObjectURL(URLS[c.id]); delete URLS[c.id];}
       try{ await idbDel(c.id); }catch(e){} }
     S.capturas=[];
-    S.perfiles=[Object.assign({},PERFIL_BASE)]; S.perfilId=S.perfiles[0].id;
+    S.perfiles=[]; S.perfilId="";
     S.med={d:100, ud:1.0, hRef:0, tol:20, upx:3, uphi:0.3, phiManual:"", rollManual:"",
            obliq:false, angulos:"15, 30", horiz:false, alturas:"20, 30"};
     S.camId=""; S.srcCamId=""; localStorage.removeItem("vpd.camId");
@@ -1534,6 +1548,10 @@ function enlaza(){
     alert("Hecho. Todo vuelve al estado inicial.");
   });
   num("aUpx","upx",S.med); num("aUphi","uphi",S.med);
+  on("aBase","click",()=>{
+    if(!confirm("Añade el perfil base de fábrica.\n\nEstá medido sobre foto de 12 MP de un Galaxy S25+: solo sirve\npara esa cámara en ese modo. Para cualquier otra, calibra.\n\n¿Continuar?")) return;
+    const b=Object.assign({},PERFIL_BASE,{id:"base"+Date.now()});
+    S.perfiles.push(b); S.perfilId=b.id; guarda(); pinta();});
   on("aExp","click",()=>{
     $("#aJson").value=JSON.stringify({vpd:1, fecha:new Date().toISOString(), perfiles:S.perfiles},null,1);
     $("#aJson").select(); navigator.clipboard?.writeText($("#aJson").value);});
