@@ -1116,6 +1116,41 @@ function ajustaRoll(pts,f,y0,x0,phi,w){
           total:-Math.atan(pend)*180/Math.PI,
           deriva:Math.max(...p.map(q=>+q.x))-Math.min(...p.map(q=>+q.x))};
 }
+/* Núcleo del ajuste óptico completo, aislado para poder repetirlo dejando una
+   marca fuera. Devuelve null si el sistema no da un resultado físico. */
+function fitFull(pts,d,hc){
+  const A=[], b=[];
+  for (const p of pts){ const r=(+p.h-hc)/d; A.push([1,r,p.y*r]); b.push(p.y); }
+  const sol = resuelve3(A,b); if(!sol) return null;
+  const [a1,b1,c1]=sol, t=-c1;
+  const f=(a1*t-b1)/(1+t*t), y0=a1-f*t, phi=Math.atan(t)*180/Math.PI;
+  if (!isFinite(f)||f<=0) return null;
+  const res = residuos(pts,f,y0,phi,d,hc);
+  return {f, y0, phi, res, rms:rmsDe(res)};
+}
+/* MARCA SOSPECHOSA.
+
+   Una sola marca mal puesta no se delata por su propio residuo: el ajuste
+   reparte el error entre todas y la culpable puede acabar con un residuo
+   menor que su vecina. Lo que sí la delata es cuánto mejora el ajuste al
+   dejarla fuera. Se repite el ajuste tantas veces como marcas haya y se
+   devuelve la que más lo mejora, solo si la mejora es grande; con una
+   calibración sana, quitar cualquier marca apenas cambia nada.            */
+function sospechosa(pts,d,hc,tipo,f0,y00,rmsBase){
+  const min = tipo==="phi" ? 3 : 4;            // uno más que el mínimo del ajuste
+  if (pts.length<min+1) return null;
+  let mejor=null;
+  for (let i=0;i<pts.length;i++){
+    const q = pts.filter((_,k)=>k!==i);
+    const o = tipo==="phi" ? (()=>{ const r=ajustaSoloPhi(q,d,hc,f0,y00);
+                                    return r?{rms:rmsDe(r.res)}:null; })()
+                           : fitFull(q,d,hc);
+    if(!o) continue;
+    if(!mejor || o.rms<mejor.rms) mejor={i, rms:o.rms};
+  }
+  if(!mejor || mejor.rms > 0.5*rmsBase) return null;
+  return {i:mejor.i, rms:mejor.rms, base:rmsBase, punto:pts[mejor.i]};
+}
 function ajusta(){
   const pts0 = S.calib.puntos.filter(p=>p.y!==null && isFinite(+p.h));
   const min = S.calib.tipo==="phi" ? 2 : 3;
@@ -1128,20 +1163,18 @@ function ajusta(){
     const p=perfil(), f=p.fRel*S.src.h, y0=p.y0Rel*S.src.h;
     const o = ajustaSoloPhi(pts0,d,hc,f,y0);
     const rl = ajustaRoll(pts0,f,y0,S.src.w/2,o.phi,S.src.w);
-    return {tipo:"phi", f, y0, phi:o.phi, res:o.res, rms:rmsDe(o.res), n:pts0.length,
+    const rmsB=rmsDe(o.res);
+    return {tipo:"phi", f, y0, phi:o.phi, res:o.res, rms:rmsB, n:pts0.length,
+            sosp: sospechosa(pts0,d,hc,"phi",f,y0,rmsB), pts:pts0,
             fRel:p.fRel, y0Rel:p.y0Rel, delta: vacio(S.calib.sensor) ? null : o.phi-(+S.calib.sensor),
             roll:rl, deltaRoll: (rl && !vacio(S.calib.sensorRoll)) ? rl.rho-(+S.calib.sensorRoll) : null};
   }
-  const A=[], b=[];
-  for (const p of pts0){ const r=(+p.h-hc)/d; A.push([1,r,p.y*r]); b.push(p.y); }
-  const sol = resuelve3(A,b);
-  if (!sol) return {err:"Sistema mal condicionado: revisa que las alturas sean distintas."};
-  const [a1,b1,c1]=sol, t=-c1;
-  const f=(a1*t-b1)/(1+t*t), y0=a1-f*t, phi=Math.atan(t)*180/Math.PI;
-  if (!isFinite(f)||f<=0) return {err:"Ajuste sin sentido físico. Revisa alturas y distancia."};
-  const res = residuos(pts0,f,y0,phi,d,hc), hImg=S.src.h;
+  const F = fitFull(pts0,d,hc);
+  if (!F) return {err:"Ajuste sin sentido físico. Revisa las alturas, que sean distintas, y la distancia."};
+  const {f,y0,phi,res} = F, hImg=S.src.h;
   const rl = ajustaRoll(pts0,f,y0,S.src.w/2,phi,S.src.w);
-  return {tipo:"full", f, y0, phi, rms:rmsDe(res), res, n:pts0.length,
+  return {tipo:"full", f, y0, phi, rms:F.rms, res, n:pts0.length,
+          sosp: sospechosa(pts0,d,hc,"full",f,y0,F.rms), pts:pts0,
           fRel:f/hImg, y0Rel:y0/hImg, delta: vacio(S.calib.sensor) ? null : phi-(+S.calib.sensor),
           roll:rl, deltaRoll: (rl && !vacio(S.calib.sensorRoll)) ? rl.rho-(+S.calib.sensorRoll) : null};
 }
@@ -1781,9 +1814,26 @@ function uiCalib(){
       <div class="kv"><span>lo que marcaba el sensor</span><b>${vacio(S.calib.sensor)?"sin anotar":((+S.calib.sensor>=0?"+":"")+fmt(+S.calib.sensor,2)+"°")}</b></div>
       <div class="big" style="margin-top:6px"><s>Desfase del sensor (δ)</s><b>${o.delta===null?"no determinado":((o.delta>=0?"+":"")+fmt(o.delta,3)+"°")}</b></div>
       <div class="kv"><span>error de ajuste</span><b>${fmt(o.rms,2)} px (${o.n} puntos)</b></div>
+      <div class="kv"><span>en alturas, a esta distancia</span><b>± ${fmt(o.rms*(+S.calib.d)/o.f,2)} cm</b></div>
       <div class="verdict ${malo?"v-na":"v-ok"}">${malo
         ?"Ajuste pobre: revisa las alturas escritas, la distancia y que las marcas se vean nítidas"
         :"Ajuste correcto"}</div></div>
+      ${o.sosp?`<div class="verdict v-na" style="text-align:left;font-weight:500">
+        <b>La marca ${o.sosp.i+1} desentona.</b> Dejándola fuera, el error de ajuste baja de
+        ${fmt(o.sosp.base,2)} px a ${fmt(o.sosp.rms,2)} px. Ninguna otra marca mejora tanto el ajuste, así que el
+        problema no está repartido: está en esa.
+        ${(()=>{ const q=o.sosp.punto, g={f:o.f,y0:o.y0};
+          const F = o.tipo==="full" ? fitFull(o.pts.filter(z=>z!==q), +S.calib.d, +S.calib.hCam) : null;
+          if(!F) return "";
+          const rr = Math.tan(Math.atan((F.y0-q.y)/F.f)+F.phi*Math.PI/180);
+          const hR = (+S.calib.hCam)+rr*(+S.calib.d);
+          return `Sin ella, la fila que marcaste corresponde a <b>${fmt(hR,1)} cm</b> y no a los
+                  ${fmt(+q.h,1)} cm escritos: ${Math.abs(hR-(+q.h))>3
+                    ? "o la cruz quedó en otro sitio (el zócalo, la junta del suelo, otra marca), o esa altura está mal escrita"
+                    : "revisa esa cruz con la vista ampliada"}.`;
+        })()}
+        </div>
+      <div class="btns"><button id="cQuita" data-i="${S.calib.puntos.indexOf(o.sosp.punto)}">Quitar la marca ${o.sosp.i+1} y reajustar</button></div>`:""}
       ${o.delta===null?`<div class="verdict v-na" style="text-align:left;font-weight:500">
         <b>Falta la lectura del inclinómetro de esta toma.</b> Sin ella no hay δ: la inclinación resuelta por el
         ajuste no tiene con qué compararse. Escríbela arriba y vuelve a pulsar Ajustar. Si la toma era de un archivo
@@ -2116,6 +2166,12 @@ function enlaza(){
     await cargaCapturas();}));
   on("kFull","click",()=>{S.calib.tipo="full";S.calib.out=null;pinta();});
   on("kPhi","click",()=>{S.calib.tipo="phi";S.calib.out=null;pinta();});
+  on("cQuita","click",e=>{
+    const i=+e.target.dataset.i; const q=S.calib.puntos[i]; if(!q) return;
+    if(!confirm("¿Quitar la marca "+(i+1)+" del ajuste?\n\nSe borra su fila y su columna, no la altura escrita, "
+      +"así que puedes volver a fijarla sobre la imagen cuando quieras.")) return;
+    q.y=null; q.x=null; S.calib.out=ajusta(); pinta();
+  });
   on("cAdd","click",()=>{S.calib.puntos.push({h:null,y:null,x:null});pinta();});
   on("cDel","click",()=>{S.calib.puntos.pop();pinta();});
   on("cRun","click",()=>{S.calib.out=ajusta();pinta();});
