@@ -249,14 +249,14 @@ function pasoDe(s){
   for(let i=1;i<v.length;i++){ const d=v[i]-v[i-1]; if(d>1e-7&&d<m) m=d; }
   return isFinite(m)?m:null;
 }
-/* El balanceo se toma SIEMPRE del vector gravedad, nunca de la orientación.
+/* La inclinación lateral se toma SIEMPRE del vector gravedad, nunca de la orientación.
    La orientación descompone la postura en tres ángulos encadenados, y con el
-   móvil a plomo el cabeceo vale 90°, que es exactamente la posición en que
-   dos de los tres ejes se superponen: ahí el balanceo deja de estar
+   móvil a plomo la inclinación frontal vale 90°, que es exactamente la posición en que
+   dos de los tres ejes se superponen: ahí la inclinación lateral deja de estar
    determinado y un giro pequeño se reparte de forma arbitraria entre dos
    ángulos, lo que produce lecturas absurdamente sensibles. El vector gravedad
    solo degenera con el móvil tumbado, que es la postura contraria a la de
-   medida. El cabeceo sí se toma de la orientación, que ahí está bien
+   medida. La inclinación frontal sí se toma de la orientación, que ahí está bien
    condicionado y viene en rejilla de 0,1° en vez de 0,58°. */
 function anota(src,p,r){
   const o=SENS[src]; o.p=p; o.r=r; o.n++;
@@ -280,8 +280,8 @@ function media(){
   const sr=mr===null?null:Math.sqrt(rr.reduce((s,x)=>s+(x.r-mr)**2,0)/rr.length);
   return {p:mp, r:mr, sp, sr, n:b.length};
 }
-/* Vector gravedad: cabeceo = asin(−gz/|g|), invariante al balanceo porque
-   el balanceo gira alrededor del eje óptico y no toca gz. Balanceo lateral
+/* Vector gravedad: inclinación frontal = asin(−gz/|g|), invariante a la inclinación lateral porque
+   la inclinación lateral gira alrededor del eje óptico y no toca gz. Inclinación lateral
    ρ = atan2(gx, gy), cero con el móvil vertical en retrato. */
 function fijaGrav(gx,gy,gz){
   const m = Math.hypot(gx,gy,gz) || 1;
@@ -315,7 +315,7 @@ async function activaSensores(){
   // Fuente fina (rejilla de 0,1° sobre el ángulo): orientación.
   window.addEventListener("deviceorientation", ev=>{
     if (ev.beta===null) return;
-    /* De la orientación se toma solo el cabeceo: gamma no sirve aquí (ver
+    /* De la orientación se toma solo la inclinación frontal: gamma no sirve aquí (ver
        nota en anota()), así que ni se lee. */
     anota("ori", ev.beta===null?null:ev.beta-90, null);
   });
@@ -356,22 +356,40 @@ function tiltUsado(){
   return +S.med.phiManual + dl;
 }
 function phiSupuesto(){ return !esVivo() && vacio(S.med.phiManual); }
-/* Al balanceo leído se le suma la desalineación de balanceo del perfil, igual
-   que al cabeceo se le suma delta. El cero del sensor y el cero de las filas
-   del sensor de imagen no coinciden, y esa diferencia es fija por objetivo. */
+/* DOS MAGNITUDES DISTINTAS, y conviene no volver a mezclarlas.
+
+   tiltLeido / rollLeido son la DESVIACIÓN MEDIDA respecto al plomo: contestan
+   a «¿lo tengo recto?» y valen 0,00 cuando el móvil está a plomo. Es lo que
+   va en la insignia, porque es lo único sobre lo que el operador puede
+   actuar mientras apunta.
+
+   tiltUsado / rollUsado son el ÁNGULO DEL EJE ÓPTICO, que es lo que necesita
+   el modelo: la lectura más la desalineación del aparato. Mezclar las dos
+   hacía que un δ mal calibrado contestara «35°» a la pregunta «¿lo tengo
+   recto?», que es exactamente la pregunta que la insignia debe responder.
+   La corrección se sigue aplicando al medir, y la cadena completa (lectura,
+   δ, ángulo aplicado) queda en el bloque técnico para quien la audite.     */
+function tiltLeido(){
+  if (esVivo()) return media().p;
+  return vacio(S.med.phiManual) ? null : +S.med.phiManual;
+}
+function rollLeido(){
+  if (esVivo()) return mediaRoll().r;
+  return vacio(S.med.rollManual) ? null : +S.med.rollManual;
+}
 function rollUsado(){
   const dr = perfil() ? (+perfil().deltaRoll || 0) : 0;
   if (esVivo()){ const m=mediaRoll().r; return m===null?null:m+dr; }
   return vacio(S.med.rollManual) ? null : +S.med.rollManual + dr;
 }
-/* Umbrales de balanceo lateral. Recomendación propia, no requisito normativo:
-   mantienen la contribución del balanceo por debajo del 1 % de la altura en
+/* Umbrales de inclinación lateral. Recomendación propia, no requisito normativo:
+   mantienen la contribución de la inclinación lateral por debajo del 1 % de la altura en
    los encuadres realistas. Ver nota en la interfaz. */
 const ROLL_OK = 1.0, ROLL_AVISO = 3.0;
-/* Incertidumbre del balanceo una vez corregido. Con el móvil casi vertical la
-   lectura de balanceo sale de atan2(gx,gy) y el redondeo del acelerómetro a
+/* Incertidumbre de la inclinación lateral una vez corregida. Con el móvil casi vertical la
+   lectura de inclinación lateral sale de atan2(gx,gy) y el redondeo del acelerómetro a
    0,1 m/s² se traduce en 0,1/9,8 rad ≈ 0,6°. Si no hay ninguna lectura de
-   balanceo (foto de un tercero sin dato), se presupuesta el límite de aviso. */
+   inclinación lateral (foto de un tercero sin dato), se presupuesta el límite de aviso. */
 const U_ROLL = 0.6, U_ROLL_DESC = ROLL_AVISO;
 /* δ y δρ son desalineaciones MECÁNICAS entre el acelerómetro y el sensor de
    imagen: décimas de grado. Un valor grande no es una desalineación, es una
@@ -387,7 +405,7 @@ function semaforoRoll(r){
   const a=Math.abs(r);
   if (a<=ROLL_OK)    return {cls:"v-ok", txt:"dentro de ±"+fmt(ROLL_OK,1)+"°"};
   if (a<=ROLL_AVISO) return {cls:"v-na", txt:"entre ±"+fmt(ROLL_OK,1)+"° y ±"+fmt(ROLL_AVISO,1)+"°: aceptable si origen y punto quedan en la misma vertical"};
-  return {cls:"v-no", txt:"por encima de ±"+fmt(ROLL_AVISO,1)+"°: corrige el balanceo"};
+  return {cls:"v-no", txt:"por encima de ±"+fmt(ROLL_AVISO,1)+"°: corrige la inclinación lateral"};
 }
 
 /* ----------------------------------------------------------- geometría */
@@ -404,7 +422,7 @@ function desajustePerfil(){
   if(Math.abs(aP-aS)/aP>0.02) return {aP,aS,pw:p.w,ph:p.h};
   return null;
 }
-/* Balanceo y perspectiva lateral.
+/* Inclinación lateral y perspectiva.
 
    Dos efectos distintos hacen que una vertical del mundo NO caiga sobre una
    columna de la imagen, y conviene no confundirlos:
@@ -412,7 +430,7 @@ function desajustePerfil(){
    1) BALANCEO (ρ). Si el móvil está girado sobre su eje óptico, toda la imagen
       gira ρ. Se corrige girando las coordenadas −ρ en torno al centro óptico,
       que es lo que hace yEf: devuelve la fila que tendría el punto con la
-      imagen puesta a plomo. Así el balanceo deja de ser un error que haya que
+      imagen puesta a plomo. Así la inclinación lateral deja de ser un error que haya que
       presupuestar y pasa a ser una corrección.
 
    2) PERSPECTIVA (convergencia de verticales). Aun a plomo perfecto, una
@@ -423,7 +441,7 @@ function desajustePerfil(){
       una RECTA, pero inclinada. Es el efecto de las fachadas que convergen al
       fotografiarlas desde abajo, y no es un defecto del equipo.
 
-   Ninguno de los dos altera la FILA de un punto por sí mismo: con cabeceo puro
+   Ninguno de los dos altera la FILA de un punto por sí mismo: con inclinación frontal pura
    la fila depende solo de la altura y la distancia, no de la posición lateral.
    Por eso una vertical que no cuadre no invalida las alturas medidas.        */
 function geom(){
@@ -465,8 +483,8 @@ function medidas(){
     const upx   = +S.med.upx;
     const cPo   = Math.abs(con(g.f,g.y0,phi0,d,yoE+upx,ytE)-base);
     const cPt   = Math.abs(con(g.f,g.y0,phi0,d,yoE,ytE+upx)-base);
-    /* Balanceo lateral. El giro de la imagen YA se corrige en geom(), así que
-       lo que queda aquí no es el balanceo sino su INCERTIDUMBRE: un punto
+    /* Inclinación lateral. El giro de la imagen YA se corrige en geom(), así que
+       lo que queda aquí no es la inclinación lateral sino su INCERTIDUMBRE: un punto
        separado Δx del origen arrastra un error (Δx/f)·sen(u_ρ). Se anula
        exactamente cuando origen y punto quedan en la misma vertical, que
        sigue siendo la mejor práctica de campo. */
@@ -542,7 +560,7 @@ function dibuja(){
    que no desmienta a las líneas de altura de referencia, que sí la llevan. */
 function linea(iy,col,lab,activa,ix){
   const py = aPan(0,iy).y;
-  /* En Calibración no se gira: ahí el balanceo que se lee es el de ahora, no
+  /* En Calibración no se gira: ahí la inclinación lateral que se lee es la de ahora, no
      el de la captura que se está midiendo, y girar por él engañaría. */
   const rl = S.modo==="calib" ? null : rollUsado();
   const tg = rl===null?0:Math.tan(rl*Math.PI/180);
@@ -569,12 +587,12 @@ const lista = t => String(t||"").split(/[,;\s]+/).map(x=>parseFloat(x.replace(",
    Son RECTAS en la imagen: una recta del espacio se proyecta como recta, y la
    generatriz del cono de desviación lo es. Lo que no es trivial es su escala
    lateral. Un punto a altura ΔH sobre el disparo y desplazado ΔH·tan(θ) queda,
-   con la cámara cabeceada φ, a una distancia al plano imagen distinta de d:
+   con la cámara inclinada φ, a una distancia al plano imagen distinta de d:
 
      separación lateral en píxeles = f·(ΔH/d)·tan(θ) / (r·sen φ + cos φ)
      fila de imagen                = yDe(r_origen + ΔH/d)
 
-   Omitir ese denominador parece inocuo y no lo es: con 10° de cabeceo el error
+   Omitir ese denominador parece inocuo y no lo es: con 10° de inclinación frontal el error
    alcanza 414 px a 150 m de altura, y con 30° se dispara. Se traza punto a
    punto porque así el recorte y el caso límite de r·sen φ + cos φ → 0, cuando
    el punto se va al infinito, se resuelven solos.                            */
@@ -613,7 +631,7 @@ function traza(g,ro,A,angDeg,col,lab){
   ctx.stroke(); ctx.setLineDash([]);
   if(lab&&ult){ ctx.fillStyle=col; ctx.fillText(lab, ult.x+5, ult.y+12); }
 }
-/* Recta horizontal del mundo a la fila a plomo v. Con balanceo ρ no es
+/* Recta horizontal del mundo a la fila a plomo v. Con inclinación lateral ρ no es
    horizontal en pantalla: aparece girada exactamente ρ, igual que el resto de
    la imagen. Se dibuja en coordenadas a plomo y se gira al final. */
 function lineaMundo(g,v,col,lw,dash,lab,der){
@@ -670,12 +688,13 @@ function cruz(){
   ctx.beginPath(); ctx.arc(cx,cy,3.4,0,7); ctx.stroke();
 }
 function pintaBadges(){
-  const t=tiltUsado();
+  const t=tiltLeido();
   const fij = esVivo() ? "" : " ⏸";   // pausa = ángulo de la toma, no lectura viva
-  const tb=$("#tiltbadge"), zb=$("#zoombadge"), rl=rollUsado();
+  const tb=$("#tiltbadge"), zb=$("#zoombadge"), rl=rollLeido();
   const dR = deltaRaro(perfil());
   tb.innerHTML = (t===null ? "φ —"
-      : "<span style=\""+(dR?"color:var(--bad)":"")+"\">φ "+(t>=0?"+":"")+fmt(t,2)+"°"+fij+(dR?" ⚠":"")+"</span>")
+      : "φ "+(t>=0?"+":"")+fmt(t,2)+"°"+fij)
+    + (dR?"<span style=\"color:var(--bad)\"> ⚠δ</span>":"")
     + "<br><span style=\"color:"
     + (rl===null?"var(--dim)":(Math.abs(rl)<=ROLL_OK?"var(--ok)":(Math.abs(rl)<=ROLL_AVISO?"var(--warn)":"var(--bad)")))
     + "\">ρ " + (rl===null?"—":(rl>=0?"+":"")+fmt(rl,2)+"°") + "</span>";
@@ -888,7 +907,7 @@ async function capturaCalib(){
   c.getContext("2d").drawImage(S.src.el,0,0);
   const blob=await new Promise(r=>c.toBlob(r,"image/jpeg",0.92));
   /* Se guardan los ángulos del sensor EN EL INSTANTE de la captura: después no
-     hay forma de recuperarlos, y sin el balanceo no se puede obtener δρ. */
+     hay forma de recuperarlos, y sin la inclinación lateral no se puede obtener δρ. */
   const M=media(), MR=mediaRoll();
   const o={id:"c"+Date.now(), ts:Date.now(), w:S.src.w, h:S.src.h,
            camaraId:S.camaraId||"", camLabel: nombreCamara(S.camaraId),
@@ -1036,12 +1055,12 @@ function resuelve3(A,b){
   }
   return [M[0][3]/M[0][0], M[1][3]/M[1][1], M[2][3]/M[2][2]];
 }
-/* Balanceo real de la imagen, medido sobre las propias marcas.
+/* Inclinación lateral real de la imagen, medida sobre las propias marcas.
 
    Las marcas de calibración están TODAS en una misma vertical de la pared. En
    la imagen deberían caer sobre una recta cuya inclinación tiene dos causas
-   sumadas: la perspectiva, que es calculable, y el balanceo, que no se conoce.
-   Quitada la primera, lo que queda es el balanceo del sensor de imagen en el
+   sumadas: la perspectiva, que es calculable, y la inclinación lateral, que no se conoce.
+   Quitada la primera, lo que queda es la inclinación lateral del sensor de imagen en el
    momento de la toma, y comparado con lo que marcaba el inclinómetro da la
    DESALINEACIÓN DE BALANCEO, el equivalente lateral de δ.
 
@@ -1051,12 +1070,12 @@ function resuelve3(A,b){
    Lo que NO se puede hacer: dejar libre la columna del centro óptico. Sobre un
    tramo vertical corto la curva de perspectiva 1/(r·sen φ + cos φ) es casi una
    recta en y, así que si se le permite un término constante propio absorbe
-   toda la inclinación y el balanceo sale siempre cero. Se verificó con escena
+   toda la inclinación y la inclinación lateral sale siempre cero. Se verificó con escena
    sintética: con ρ real de 0,75° el ajuste libre devolvía 0,000°.
 
    Con x₀ fijado en el centro del fotograma el sistema sí separa los dos
    efectos, y lo hace exactamente, con las marcas centradas o desviadas casi un
-   metro, y con cabeceos de 0,5° o de 8°. El límite pasa a ser lo que se
+   metro, y con inclinaciones frontales de 0,5° o de 8°. El límite pasa a ser lo que se
    desconoce de x₀: un punto principal desplazado 30 px sobre 3000 sesga ρ en
    0,09°, y eso se calcula aquí perturbando x₀ un 1 % del ancho.             */
 function ajustaRoll(pts,f,y0,x0,phi,w){
@@ -1154,15 +1173,15 @@ function diagHTML(){
     <button class="${SENS.pref==="grav"?"on":""}" id="sGrav">Gravedad · 0,58°</button>
   </div>
   <table>
-    <tr><th>Fuente · cabeceo</th><th>último (°)</th><th>escalón (°)</th><th>n</th></tr>
+    <tr><th>Fuente · inclinación frontal</th><th>último (°)</th><th>escalón (°)</th><th>n</th></tr>
     ${fila("Orientación",SENS.ori,"p")}
     ${fila("Gravedad",SENS.grav,"p")}
-    <tr><th>Balanceo · solo gravedad</th><th>último (°)</th><th>escalón (°)</th><th>n</th></tr>
+    <tr><th>Inclinación lateral · solo gravedad</th><th>último (°)</th><th>escalón (°)</th><th>n</th></tr>
     ${fila("Gravedad",SENS.grav,"r")}
   </table>
   <div class="kv"><span>promedio de ${fmt(VENTANA/1000,1)} s</span><b>${M.n} muestras</b></div>
-  <div class="kv"><span>dispersión del cabeceo</span><b>${fmt(M.sp,3)}° · ${juicio(dP)}</b></div>
-  <div class="kv"><span>dispersión del balanceo</span><b>${fmt(M.sr,3)}° · ${juicio(dR)}</b></div>
+  <div class="kv"><span>dispersión de la inclinación frontal</span><b>${fmt(M.sp,3)}° · ${juicio(dP)}</b></div>
+  <div class="kv"><span>dispersión de la inclinación lateral</span><b>${fmt(M.sr,3)}° · ${juicio(dR)}</b></div>
   <div class="note">La columna «escalón» es el salto mínimo realmente observado entre lecturas distintas:
   la mide la página, no la supongo. El acelerómetro viene redondeado a 0,1 m/s², que junto al móvil vertical
   son 0,584°; la orientación viene redondeada a 0,1° sobre el propio ángulo. Es una mitigación del navegador
@@ -1249,7 +1268,7 @@ function uiMedida(m){
     Calibra un perfil para esta fuente en la pestaña Calibración.</div>`;
 
   /* --- toma: distancia y ángulos --- */
-  const rl = rollUsado(), sem = semaforoRoll(rl), tt = tiltUsado();
+  const rl = rollLeido(), sem = semaforoRoll(rl), tt = tiltUsado(), tl = tiltLeido();
   h += `<h3>Toma</h3>`;
   if (esVivo()){
     /* En vivo solo se elige el OBJETIVO, arriba. El perfil no es una
@@ -1291,29 +1310,43 @@ function uiMedida(m){
   }
   h += `<div class="row"><label>Distancia de observación</label><input type="number" step="0.01" id="iD" value="${S.med.d}"><span class="u">m</span></div>`;
 
+  /* Lo que se muestra es la LECTURA: desviación respecto al plomo, cero cuando
+     el móvil está recto. El ángulo del eje óptico, que es el que entra en el
+     modelo, se enseña al lado solo cuando la desalineación es apreciable, para
+     que la cifra grande siga contestando a «¿lo tengo recto?». */
+  const dl = +perfil().delta||0, dr = +perfil().deltaRoll||0;
+  const apl = (v,d) => (v===null||Math.abs(d)<0.05) ? ""
+    : `<span style="color:var(--dim);font:500 12px inherit"> · eje óptico ${(v+d>=0?"+":"")+fmt(v+d,2)}°</span>`;
   if (esVivo()){
     const colR = sem.cls==="v-ok"?"var(--ok)":(sem.cls==="v-no"?"var(--bad)":"var(--warn)");
-    h += `<div class="row"><label>Cabeceo (arriba/abajo)</label>
-      <div style="flex:1;font:700 17px ui-monospace,monospace">${tt===null?"—":(tt>=0?"+":"")+fmt(tt,2)+"°"}</div></div>
-    <div class="row"><label>Balanceo (lateral)</label>
-      <div style="flex:1;font:700 17px ui-monospace,monospace;color:${colR}">${rl===null?"—":(rl>=0?"+":"")+fmt(rl,2)+"°"}</div></div>
+    h += `<div class="row"><label>Inclinación frontal</label>
+      <div style="flex:1;font:700 17px ui-monospace,monospace">${tl===null?"—":(tl>=0?"+":"")+fmt(tl,2)+"°"}${apl(tl,dl)}</div></div>
+    <div class="row"><label>Inclinación lateral</label>
+      <div style="flex:1;font:700 17px ui-monospace,monospace;color:${colR}">${rl===null?"—":(rl>=0?"+":"")+fmt(rl,2)+"°"}${apl(rl,dr)}</div></div>
     ${sensorOn?"":'<div class="btns"><button class="p" id="bSens">Activar sensores</button></div>'}
-    <div class="note">Al congelar, estos ángulos pasan a ser datos de la toma.</div>`;
+    <div class="note">Estas dos cifras son la <b>desviación respecto al plomo</b> que mide el inclinómetro: valen
+    0,00° con el móvil recto. El modelo no usa esa lectura directamente, le suma la desalineación del aparato
+    (δ y δρ) para obtener el ángulo del eje óptico, que es otra cosa y figura en el bloque técnico.
+    Al congelar, estas lecturas pasan a ser datos de la toma.</div>`;
   } else {
-    h += `<div class="row"><label>Cabeceo (arriba/abajo)</label><input type="number" step="0.01" id="iPhi"
-      value="${S.med.phiManual??""}" placeholder="lectura del sensor al disparar"><span class="u">°</span></div>
-    <div class="row"><label>Balanceo (lateral)</label><input type="number" step="0.01" id="iRoll"
-      value="${S.med.rollManual??""}" placeholder="opcional"><span class="u">°</span></div>`;
-    if (phiSupuesto()) h += `<div class="verdict v-na">Sin cabeceo: se supone cámara a plomo</div>`;
-    else if (rl!==null && sem.cls!=="v-ok") h += `<div class="verdict ${sem.cls}">Balanceo ${fmt(Math.abs(rl),1)}°: se corrige, pero deja origen y punto en la misma vertical</div>`;
-    if (deltaRaro(perfil())) h += `<div class="verdict v-no" style="text-align:left;font-weight:500">
-      <b>El perfil activo lleva δ = ${(perfil().delta>=0?"+":"")+fmt(perfil().delta,2)}°.</b>
-      Eso no es una desalineación del sensor, que sería de décimas de grado: es una calibración mal cerrada, y la
-      aplicación está sumando ese ángulo a todas las lecturas de cabeceo. Por eso el móvil a plomo marca
-      ${fmt(perfil().delta,0)}° y la vertical de referencia no cruza marcas que sí están a plomo: la perspectiva se
-      calcula con un cabeceo que no es el real. Corrígelo en Ajustes y vuelve a calibrar anotando la lectura del
-      inclinómetro de la toma.</div>`;
+    h += `<div class="row"><label>Inclinación frontal</label><input type="number" step="0.01" id="iPhi"
+      value="${S.med.phiManual??""}" placeholder="lectura del sensor al disparar"><span class="u">°</span>
+      <span style="flex:0 0 auto">${apl(tl,dl)}</span></div>
+    <div class="row"><label>Inclinación lateral</label><input type="number" step="0.01" id="iRoll"
+      value="${S.med.rollManual??""}" placeholder="opcional"><span class="u">°</span>
+      <span style="flex:0 0 auto">${apl(rl,dr)}</span></div>
+    <div class="note">Escribe lo que marcaba el inclinómetro al disparar, no un ángulo ya corregido: la
+    desalineación del aparato la añade el modelo.</div>`;
+    if (phiSupuesto()) h += `<div class="verdict v-na">Sin inclinación frontal: se supone cámara a plomo</div>`;
+    else if (rl!==null && sem.cls!=="v-ok") h += `<div class="verdict ${sem.cls}">Inclinación lateral ${fmt(Math.abs(rl),1)}°: se corrige, pero deja origen y punto en la misma vertical</div>`;
   }
+  if (deltaRaro(perfil())) h += `<div class="verdict v-no" style="text-align:left;font-weight:500">
+    <b>El perfil activo lleva δ = ${(perfil().delta>=0?"+":"")+fmt(perfil().delta,2)}°.</b>
+    Eso no es una desalineación del sensor, que sería de décimas de grado: es una calibración mal cerrada, y la
+    aplicación está sumando ese ángulo a la lectura para obtener el ángulo del eje óptico. Así, con el móvil a
+    plomo, el modelo cree que la cámara apunta ${fmt(perfil().delta,0)}° arriba, y la vertical de referencia no
+    cruza marcas que sí están a plomo: la perspectiva se calcula con una inclinación que no es la real.
+    Corrígelo en Ajustes y vuelve a calibrar anotando la lectura del inclinómetro de la toma.</div>`;
 
   if (T){
     h += `<div class="row"><label>Error de la distancia</label><input type="number" step="0.1" id="iUd" value="${S.med.ud}"><span class="u">%</span></div>
@@ -1322,11 +1355,11 @@ function uiMedida(m){
     al que quieras referir los resultados. Déjala en cero y las alturas salen medidas desde el propio punto de disparo, que es como
     las define la norma. Solo se usa cuando el informe tiene que darlas sobre otra referencia.
     <br><br>Los ángulos son datos <b>de la toma</b>: el sensor de ahora no sabe nada de cómo estaba la cámara
-    cuando se capturó la imagen. En el cabeceo se teclea la lectura cruda y la aplicación añade
+    cuando se capturó la imagen. En la inclinación frontal se teclea la lectura cruda y la aplicación añade
     δ = ${(perfil().delta>=0?"+":"")+fmt(perfil().delta,3)}°.
-    <br><br><b>El cabeceo no tiene límite</b>: el modelo lo usa como dato y no introduce error por sí mismo.
+    <br><br><b>La inclinación frontal no tiene límite</b>: el modelo la usa como dato y no introduce error por sí misma.
     Lo que importa es que origen y punto queden a un lado y otro del centro de la imagen, vigilado por la suma
-    r<sub>origen</sub> + r<sub>punto</sub>. <b>El balanceo sí es error directo</b>, porque gira el eje y de la
+    r<sub>origen</sub> + r<sub>punto</sub>. <b>La inclinación lateral sí es error directo</b>, porque gira el eje y de la
     imagen respecto a la vertical real; se anula cuando origen y punto están en la misma vertical.</div>`;
     if (SENS.err) h += `<div class="err">${SENS.err}</div>`;
   }
@@ -1393,16 +1426,16 @@ function uiMedida(m){
   <div class="btns"><button class="${S.med.obliq?"g":""}" id="bObl">${S.med.obliq?"Oblicuas ✓":"Oblicuas"}</button></div>
   <div class="note">Las oblicuas salen del punto de disparo y acotan la desviación respecto a la vertical, pensadas
   para voladores. Son rectas, como corresponde a la proyección de una recta del espacio, pero su separación lateral
-  depende del cabeceo: un punto alto queda a distinta distancia del plano imagen que el punto de disparo, y eso
-  reescala la separación. Por eso <b>se recalculan al cambiar el cabeceo</b> en vez de trazarse con una pendiente fija.
+  depende de la inclinación frontal: un punto alto queda a distinta distancia del plano imagen que el punto de disparo, y eso
+  reescala la separación. Por eso <b>se recalculan al cambiar la inclinación frontal</b> en vez de trazarse con una pendiente fija.
   <br><br><b>La vertical de referencia casi nunca es una columna de la foto.</b> Una vertical del mundo solo cae sobre
   una columna si pasa por el centro óptico; fuera de él se proyecta inclinada y convergiendo hacia el horizonte, igual
   que las fachadas fotografiadas desde abajo. Se dibuja ya con esa inclinación, junto con el giro de la imagen, así que
   debe cruzar una vertical real de principio a fin. Si no la cruza, hay tres causas y se distinguen por su forma:
-  desviación recta uniforme es balanceo mal puesto a cero, hay que medir δρ en Calibración; desviación que se curva
+  desviación recta uniforme es inclinación lateral mal puesta a cero, hay que medir δρ en Calibración; desviación que se curva
   hacia los bordes es distorsión del objetivo, y conviene medir hacia el centro del fotograma; y un solo punto fuera de
   la recta es la cruz mal colocada. <b>Ninguna de las tres altera la altura medida</b> mientras origen y punto estén
-  poco separados en horizontal: con cabeceo puro la fila de un punto depende solo de su altura y su distancia.
+  poco separados en horizontal: con inclinación frontal pura la fila de un punto depende solo de su altura y su distancia.
   <br><br><b>Limitación que conviene tener presente.</b> La imagen solo da la <b>proyección</b> del ángulo: si el
   volador se desvía hacia la cámara o alejándose de ella, el ángulo aparente es menor que el real. Un artículo que
   salga fuera de las líneas incumple con seguridad; uno que quede dentro no queda acreditado como conforme. Para
@@ -1419,17 +1452,17 @@ function uiMedida(m){
       <table>
         <tr><th>Contribución</th><th>u (m)</th><th>%&nbsp;de&nbsp;u<sub>c</sub></th></tr>
         ${[["Distancia de observación",sx.comp.cDist],["Focal (calibración)",sx.comp.cF],
-           ["Cabeceo φ",sx.comp.cPhi],["Balanceo lateral ρ",sx.comp.cRoll],
+           ["Inclinación frontal φ",sx.comp.cPhi],["Inclinación lateral ρ",sx.comp.cRoll],
            ["Marcado del origen",sx.comp.cPo],["Marcado del punto",sx.comp.cPt]]
           .map(([k,v])=>`<tr><td>${k}</td><td>${fmt(v,3)}</td><td>${fmt(100*v*v/(sx.uc*sx.uc),0)}</td></tr>`).join("")}
         <tr><td><b>u<sub>c</sub></b></td><td><b>${fmt(sx.uc,3)}</b></td><td>100</td></tr>
         <tr><td><b>U (k=2)</b></td><td><b>${fmt(sx.U,3)}</b></td><td>${fmt(sx.relU,2)} %</td></tr>
       </table>
       <div class="note">r<sub>origen</sub> = ${fmt(100*sx.ro,2)} % · r<sub>punto</sub> = ${fmt(100*sx.rt,2)} % ·
-      suma ${fmt(100*(sx.ro+sx.rt),2)} %, que es el factor del error de cabeceo y de focal.
-      Separación horizontal origen-punto ${sx.dx===null?"no registrada":fmt(sx.dx,0)+" px"}${rl===null?"":", con ρ = "+fmt(rl,2)+"° ya corregido"}.
-      El giro de la imagen se descuenta antes de leer la fila, así que lo que queda en el presupuesto no es el balanceo sino su incertidumbre:
-      (Δx/f)·sen(u<sub>ρ</sub>), con u<sub>ρ</sub> = ${fmt(rl===null?U_ROLL_DESC:U_ROLL,1)}°${rl===null?" por no haber lectura de balanceo":" por el redondeo del acelerómetro"}.
+      suma ${fmt(100*(sx.ro+sx.rt),2)} %, que es el factor del error de inclinación frontal y de focal.
+      Separación horizontal origen-punto ${sx.dx===null?"no registrada":fmt(sx.dx,0)+" px"}${rollUsado()===null?"":", con ρ = "+fmt(rollUsado(),2)+"° ya corregida"}.
+      El giro de la imagen se descuenta antes de leer la fila, así que lo que queda en el presupuesto no es la inclinación lateral sino su incertidumbre:
+      (Δx/f)·sen(u<sub>ρ</sub>), con u<sub>ρ</sub> = ${fmt(rl===null?U_ROLL_DESC:U_ROLL,1)}°${rl===null?" por no haber lectura de inclinación lateral":" por el redondeo del acelerómetro"}.
       Sigue siendo preferible dejar origen y punto en la misma vertical: entonces el término se anula sin depender de nada.</div>`;
     }
   }
@@ -1442,8 +1475,11 @@ function uiMedida(m){
       <div class="kv"><span>centro óptico (y₀)</span><b>${fmt(g.y0,1)} px (${fmt(perfil().y0Rel,5)})</b></div>
       <div class="kv"><span>desalineación del sensor δ</span><b>${(perfil().delta>=0?"+":"")+fmt(perfil().delta,3)}°</b></div>
       <div class="kv"><span>desalineación lateral δρ</span><b>${((+perfil().deltaRoll||0)>=0?"+":"")+fmt(+perfil().deltaRoll||0,3)}°</b></div>
-      <div class="kv"><span>cabeceo aplicado</span><b>${tt===null?"—":(tt>=0?"+":"")+fmt(tt,3)+"°"}</b></div>
-      <div class="kv"><span>error de marcado · de cabeceo</span><b>${fmt(S.med.upx,1)} px · ${fmt(S.med.uphi,2)}°</b></div>
+      <div class="kv"><span>lectura del inclinómetro · frontal</span><b>${tl===null?"—":(tl>=0?"+":"")+fmt(tl,3)+"°"}</b></div>
+      <div class="kv"><span>ángulo del eje óptico · frontal</span><b>${tt===null?"—":(tt>=0?"+":"")+fmt(tt,3)+"°"}</b></div>
+      <div class="kv"><span>lectura del inclinómetro · lateral</span><b>${rl===null?"—":(rl>=0?"+":"")+fmt(rl,3)+"°"}</b></div>
+      <div class="kv"><span>giro aplicado a la imagen · lateral</span><b>${rollUsado()===null?"—":(rollUsado()>=0?"+":"")+fmt(rollUsado(),3)+"°"}</b></div>
+      <div class="kv"><span>error de marcado · de inclinación frontal</span><b>${fmt(S.med.upx,1)} px · ${fmt(S.med.uphi,2)}°</b></div>
       <div class="kv"><span>factor de cobertura k</span><b>k = 2</b></div>
     </div>
     <div class="note">Modelo: r = tan(arctan((y₀−y)/f) + φ); altura = (r<sub>punto</sub> − r<sub>origen</sub>)·d.
@@ -1459,15 +1495,15 @@ function glosario(){
    ["Distancia de observación, d","Del trípode al plano vertical que pasa por el punto de disparo. Todo se mide en proporción a ella."],
    ["Altura en % de la distancia, r","La altura dividida por la distancia. A 100 m de distancia, el 60 % son 60 m. Es el número que no depende de haber medido bien la distancia."],
    ["Fila en la imagen, y","En qué fila de píxeles cae la marca, contando desde el borde superior de la foto. Es la coordenada que lee el modelo."],
-   ["Separación lateral, Δx","Cuántos píxeles separan el punto del origen en horizontal. Si vale cero, el balanceo no introduce ningún error."],
-   ["Cabeceo, φ","Cuánto apunta la cámara hacia arriba o hacia abajo. El modelo lo usa como dato, no como error."],
-   ["Balanceo, ρ","Cuánto está girada la cámara sobre su propio eje, el giro que tuerce el horizonte en la foto."],
+   ["Separación lateral, Δx","Cuántos píxeles separan el punto del origen en horizontal. Si vale cero, la inclinación lateral no introduce ningún error."],
+   ["Inclinación frontal, φ","Cuánto apunta la cámara hacia arriba o hacia abajo. El modelo la usa como dato, no como error."],
+   ["Inclinación lateral, ρ","Cuánto está girada la cámara sobre su propio eje, el giro que tuerce el horizonte en la foto."],
    ["Desalineación del sensor, δ","Diferencia fija entre lo que marca el sensor del móvil y hacia dónde mira realmente la lente. Es una constante de cada aparato."],
-   ["Desalineación lateral, δρ","Lo mismo que δ pero en el giro: el cero de balanceo del inclinómetro no coincide con las filas del sensor de imagen. También es una constante del aparato, y se mide sobre marcas puestas en una misma vertical."],
+   ["Desalineación lateral, δρ","Lo mismo que δ pero en el giro: el cero de inclinación lateral del inclinómetro no coincide con las filas del sensor de imagen. También es una constante del aparato, y se mide sobre marcas puestas en una misma vertical."],
    ["Convergencia de verticales","Una vertical del mundo solo cae sobre una columna de la foto si pasa por el centro óptico. Fuera de él sale inclinada, igual que las fachadas fotografiadas desde abajo. No es un defecto del equipo y no altera las alturas medidas."],
    ["Focal, f","La distancia focal del objetivo expresada en píxeles de la imagen. Fija la escala angular de la foto."],
    ["Centro óptico, y₀","La fila de la imagen que atraviesa el eje de la lente. Casi, pero no exactamente, el centro del fotograma."],
-   ["Columna del centro óptico, x₀","La columna equivalente a y₀. La calibración no la determina, porque las marcas están todas en una vertical, así que se supone el centro del fotograma: de ahí sale el ±0,09° de la medida de balanceo."],
+   ["Columna del centro óptico, x₀","La columna equivalente a y₀. La calibración no la determina, porque las marcas están todas en una vertical, así que se supone el centro del fotograma: de ahí sale el ±0,09° de la medida de inclinación lateral."],
    ["Incertidumbre típica, u","El margen de error que aporta una causa concreta, expresado a una desviación típica."],
    ["Incertidumbre combinada, u_c","Todas las contribuciones sumadas en cuadratura, es decir por la raíz de la suma de cuadrados."],
    ["Incertidumbre ampliada, U","El margen final que se declara. Con k = 2 abarca en torno al 95 % de los casos."],
@@ -1682,8 +1718,8 @@ function uiCalib(){
     y esa misma resolución.</div>`;
   const rlc = rollUsado();
   if (rlc!==null && Math.abs(rlc)>ROLL_OK)
-    h += `<div class="err">Balanceo lateral ρ = ${fmt(rlc,2)}° en la lectura actual.
-    La foto de calibración debe tomarse con ρ ≈ 0: un balanceo apreciable sesga y₀ y φ.</div>`;
+    h += `<div class="err">Inclinación lateral ρ = ${fmt(rlc,2)}° en la lectura actual.
+    La foto de calibración debe tomarse con ρ ≈ 0: una inclinación lateral apreciable sesga y₀ y φ.</div>`;
 
   const E=estadoCalib();
   const paso=(ok,txt)=>`<div class="kv"><span style="text-align:left">${ok?"✓":"○"} ${txt}</span><b></b></div>`;
@@ -1711,10 +1747,10 @@ function uiCalib(){
   <h3>Geometría del ensayo</h3>
   <div class="row"><label>Distancia horiz.</label><input type="number" step="0.1" id="cD" value="${S.calib.d}"><span class="u">cm</span></div>
   <div class="row"><label>Altura de lente</label><input type="number" step="0.1" id="cHc" value="${S.calib.hCam}"><span class="u">cm</span></div>
-  <div class="row"><label>Lectura sensor · cabeceo</label><input type="number" step="0.01" id="cSen" value="${S.calib.sensor}" placeholder="obligatorio"><span class="u">°</span></div>
-  <div class="row"><label>Lectura sensor · balanceo</label><input type="number" step="0.01" id="cSenR" value="${S.calib.sensorRoll}" placeholder="opcional"><span class="u">°</span></div>
+  <div class="row"><label>Lectura sensor · frontal</label><input type="number" step="0.01" id="cSen" value="${S.calib.sensor}" placeholder="obligatorio"><span class="u">°</span></div>
+  <div class="row"><label>Lectura sensor · lateral</label><input type="number" step="0.01" id="cSenR" value="${S.calib.sensorRoll}" placeholder="opcional"><span class="u">°</span></div>
   <div class="note">La altura de la lente sobre el suelo es imprescindible: sin ella la inclinación y la altura de cámara son indistinguibles y el ajuste no significa nada.
-  El balanceo es opcional, pero si lo anotas se obtiene también el cero lateral del inclinómetro.</div>
+  La inclinación lateral es opcional, pero si la anotas se obtiene también el cero lateral del inclinómetro.</div>
 
   <h3>Puntos</h3>
   <table><tr><th>#</th><th>Altura (cm)</th><th>y (px)</th><th>x (px)</th><th></th></tr>
@@ -1725,7 +1761,7 @@ function uiCalib(){
     <td>${p.x===null||p.x===undefined?"—":fmt(p.x,0)}</td>
     <td><button class="mini cFix" data-i="${i}">fijar</button></td>
   </tr>`).join("")}</table>
-  <div class="note">La columna <b>x</b> se guarda para medir el balanceo: todas las marcas están en una misma vertical de la pared, así que su desviación lateral en la imagen delata el giro de la cámara.</div>
+  <div class="note">La columna <b>x</b> se guarda para medir la inclinación lateral: todas las marcas están en una misma vertical de la pared, así que su desviación lateral en la imagen delata el giro de la cámara.</div>
   <div class="btns"><button id="cAdd">+ punto</button><button id="cDel">− punto</button>
     <button class="p" id="cRun">Ajustar</button></div>`;
 
@@ -1741,7 +1777,7 @@ function uiCalib(){
       <div class="kv"><span>focal relativa al fotograma</span><b>${fmt(o.fRel,5)}</b></div>
       <div class="kv"><span>centro óptico y₀</span><b>${fmt(o.y0,1)} px (${fmt(o.y0Rel,5)})</b></div>`
       : `<div class="kv"><span>óptica tomada del perfil</span><b>${fmt(o.fRel,5)} / ${fmt(o.y0Rel,5)}</b></div>`}
-      <div class="kv"><span>inclinación real de la toma</span><b>${(o.phi>=0?"+":"")+fmt(o.phi,3)}°</b></div>
+      <div class="kv"><span>inclinación frontal real de la toma</span><b>${(o.phi>=0?"+":"")+fmt(o.phi,3)}°</b></div>
       <div class="kv"><span>lo que marcaba el sensor</span><b>${vacio(S.calib.sensor)?"sin anotar":((+S.calib.sensor>=0?"+":"")+fmt(+S.calib.sensor,2)+"°")}</b></div>
       <div class="big" style="margin-top:6px"><s>Desfase del sensor (δ)</s><b>${o.delta===null?"no determinado":((o.delta>=0?"+":"")+fmt(o.delta,3)+"°")}</b></div>
       <div class="kv"><span>error de ajuste</span><b>${fmt(o.rms,2)} px (${o.n} puntos)</b></div>
@@ -1760,25 +1796,25 @@ function uiCalib(){
         (el ajuste ha resuelto ${(o.phi>=0?"+":"")+fmt(o.phi,2)}° de inclinación real, así que comprueba si el móvil estaba
         así de inclinado al disparar la foto), o que hayas usado «solo desalineación» sobre un perfil cuya óptica no
         corresponde a este fotograma, caso en el que el ajuste mete la diferencia de focal dentro del ángulo.
-        Aplicarlo dejaría la aplicación midiendo con ${fmt(Math.abs(o.delta),0)}° de error de cabeceo.</div>`:""}
-      ${o.roll ? `<h3>Balanceo medido sobre las marcas</h3><div class="res">
+        Aplicarlo dejaría la aplicación midiendo con ${fmt(Math.abs(o.delta),0)}° de error de inclinación frontal.</div>`:""}
+      ${o.roll ? `<h3>Inclinación lateral medida sobre las marcas</h3><div class="res">
       <div class="kv"><span>inclinación observada de la línea de marcas</span><b>${(o.roll.total>=0?"+":"")+fmt(o.roll.total,3)}°</b></div>
       <div class="kv"><span>parte explicada por la perspectiva</span><b>${(o.roll.total-o.roll.rho>=0?"+":"")+fmt(o.roll.total-o.roll.rho,3)}°</b></div>
-      <div class="big" style="margin-top:6px"><s>Balanceo real de la imagen (ρ)</s><b>${(o.roll.rho>=0?"+":"")+fmt(o.roll.rho,3)}°${o.roll.u!==null?" ± "+fmt(o.roll.u,3)+"°":""}</b></div>
+      <div class="big" style="margin-top:6px"><s>Inclinación lateral real de la imagen (ρ)</s><b>${(o.roll.rho>=0?"+":"")+fmt(o.roll.rho,3)}°${o.roll.u!==null?" ± "+fmt(o.roll.u,3)+"°":""}</b></div>
       <div class="kv"><span>deriva lateral de las marcas</span><b>${fmt(o.roll.deriva,0)} px de ${S.src.w}</b></div>
       <div class="kv"><span>lo que marcaba el sensor</span><b>${vacio(S.calib.sensorRoll)?"sin anotar":((+S.calib.sensorRoll>=0?"+":"")+fmt(+S.calib.sensorRoll,2)+"°")}</b></div>
       ${vacio(S.calib.sensorRoll)?"":`<div class="big"><s>Desfase lateral del sensor (δρ)</s><b>${(o.deltaRoll>=0?"+":"")+fmt(o.deltaRoll,3)}°</b></div>`}
       <div class="kv"><span>curvatura residual</span><b>${fmt(o.roll.rms,1)} px</b></div>
       <div class="verdict ${o.roll.rms>0.004*S.src.w?"v-na":"v-ok"}">${o.roll.rms>0.004*S.src.w
-        ?"Las marcas no caen en una recta: eso ya no es balanceo, es distorsión del objetivo o alguna cruz mal puesta"
+        ?"Las marcas no caen en una recta: eso ya no es inclinación lateral, es distorsión del objetivo o alguna cruz mal puesta"
         :"Las marcas caen en una recta, como debe ser"}</div></div>
       <div class="note"><b>Para qué sirve esto.</b> Que la vertical dibujada no cruce todas las marcas tiene dos causas sumadas, y aquí se separan.
       Una es la perspectiva: una vertical del mundo que no pase por el centro óptico se proyecta inclinada, converge igual que las fachadas vistas desde abajo, y no es un defecto del equipo.
-      La otra es el balanceo real, que incluye el desfase entre el cero del inclinómetro y las filas del sensor de imagen, igual que δ en el cabeceo.
+      La otra es la inclinación lateral real, que incluye el desfase entre el cero del inclinómetro y las filas del sensor de imagen, igual que δ en la inclinación frontal.
       La <b>curvatura residual</b> es lo que queda sin explicar por ninguna de las dos: si es grande, hay distorsión de objetivo o un error al marcar.
-      Ninguno de los dos efectos altera la altura medida de una marca, porque con cabeceo puro la fila de un punto depende solo de su altura y su distancia, no de su posición lateral.
-      Sí la alteran cuando origen y punto están muy separados en horizontal, y por eso el balanceo se corrige y la separación lateral sigue presupuestándose.</div>
-      ${vacio(S.calib.sensorRoll)?`<div class="note">Anota arriba el balanceo que marcaba el inclinómetro en la toma y se obtendrá δρ, aplicable al perfil.</div>`:""}` : ""}
+      Ninguno de los dos efectos altera la altura medida de una marca, porque con inclinación frontal pura la fila de un punto depende solo de su altura y su distancia, no de su posición lateral.
+      Sí la alteran cuando origen y punto están muy separados en horizontal, y por eso la inclinación lateral se corrige y la separación lateral sigue presupuestándose.</div>
+      ${vacio(S.calib.sensorRoll)?`<div class="note">Anota arriba la inclinación lateral que marcaba el inclinómetro en la toma y se obtendrá δρ, aplicable al perfil.</div>`:""}` : ""}
       <div class="note">Desajuste de cada marca, en píxeles: ${o.res.map(v=>fmt(v,1)).join(" / ")}.
       Si crece hacia las marcas de arriba y de abajo, suele ser distorsión del objetivo o una focal mal resuelta.
       Si todas fallan por igual, suele ser un error en la altura de la lente.
@@ -1809,8 +1845,8 @@ function informeCalib(p){
     "| | |","|---|---|",
     "| Distancia al plano de las marcas | "+fmt(D.d,1)+" cm |",
     "| Altura de la lente sobre el suelo | "+fmt(D.hCam,1)+" cm |",
-    "| Lectura del inclinómetro en la toma · cabeceo | "+fmt(D.sensor,2)+"° |",
-    "| Lectura del inclinómetro en la toma · balanceo | "+(D.sensorRoll===null||D.sensorRoll===undefined?"no anotada":fmt(D.sensorRoll,2)+"°")+" |",
+    "| Lectura del inclinómetro en la toma · frontal | "+fmt(D.sensor,2)+"° |",
+    "| Lectura del inclinómetro en la toma · lateral | "+(D.sensorRoll===null||D.sensorRoll===undefined?"no anotada":fmt(D.sensorRoll,2)+"°")+" |",
     "| Tipo de ajuste | "+(D.tipo==="phi"?"solo inclinación":"óptica completa")+" |","",
     "## Datos y desajustes","",
     "| Marca | Altura (cm) | Fila y (px) | Columna x (px) | Desajuste (px) |","|---|---|---|---|---|");
@@ -1821,11 +1857,11 @@ function informeCalib(p){
     "| Distancia focal (f) | "+fmt(D.f,1)+" px |",
     "| Focal relativa al fotograma | "+fmt(p.fRel,5)+" |",
     "| Centro óptico (y₀) | "+fmt(D.y0,1)+" px ("+fmt(p.y0Rel,5)+") |",
-    "| Inclinación resuelta de la toma | "+fmt(D.phi,3)+"° |",
+    "| Inclinación frontal resuelta de la toma | "+fmt(D.phi,3)+"° |",
     "| Desfase del sensor (δ) | "+fmt(p.delta,3)+"° |",
     "| Desfase lateral del sensor (δρ) | "+((+p.deltaRoll||+p.deltaRoll===0)?fmt(+p.deltaRoll||0,3)+"°":"no determinado")+" |",
     "| Error de ajuste (rms) | "+fmt(D.rms,2)+" px |",
-    "| Balanceo medido sobre las marcas (ρ) | "+(D.rho===null||D.rho===undefined?"no determinado":fmt(D.rho,3)+"°")+" |",
+    "| Inclinación lateral medida sobre las marcas (ρ) | "+(D.rho===null||D.rho===undefined?"no determinado":fmt(D.rho,3)+"°")+" |",
     "| Curvatura residual de la línea de marcas | "+(D.rhoRms===null||D.rhoRms===undefined?"—":fmt(D.rhoRms,1)+" px")+" |",
     "| Factor de zoom deducido | "+(zoomDe(p)===null?"—":"×"+fmt(zoomDe(p),2))+" |","",
     "## Modelo","",
@@ -1840,7 +1876,7 @@ function informeCalib(p){
     "4. Con todas las marcas en una sola vertical y a una sola distancia, focal, centro óptico e inclinación están",
     "   correlacionados. Un error de ajuste bajo no garantiza por sí solo que cada valor sea correcto; la",
     "   comprobación es repetir sobre otra toma.",
-    "5. El balanceo ρ se obtiene suponiendo que la columna del centro óptico es el centro del fotograma, porque con",
+    "5. La inclinación lateral ρ se obtiene suponiendo que la columna del centro óptico es el centro del fotograma, porque con",
     "   todas las marcas en una vertical la calibración no la determina. Un punto principal desplazado el 1 % del",
     "   ancho sesga ρ en torno a 0,09°.","");
   return L.join("\n");
@@ -1863,8 +1899,8 @@ function uiAjustes(){
   <div class="res">
     <div class="kv"><span>f / altura de fotograma</span><b>${fmt(p.fRel,5)}</b></div>
     <div class="kv"><span>centro óptico relativo</span><b>${fmt(p.y0Rel,5)}</b></div>
-    <div class="kv"><span>desalineación δ · cabeceo</span><b${deltaRaro(p)?' style="color:var(--bad)"':''}>${(p.delta>=0?"+":"")+fmt(p.delta,3)}°${deltaRaro(p)?" ⚠":""}</b></div>
-    <div class="kv"><span>desalineación δρ · balanceo</span><b>${((+p.deltaRoll||0)>=0?"+":"")+fmt(+p.deltaRoll||0,3)}°</b></div>
+    <div class="kv"><span>desalineación δ · frontal</span><b${deltaRaro(p)?' style="color:var(--bad)"':''}>${(p.delta>=0?"+":"")+fmt(p.delta,3)}°${deltaRaro(p)?" ⚠":""}</b></div>
+    <div class="kv"><span>desalineación δρ · lateral</span><b>${((+p.deltaRoll||0)>=0?"+":"")+fmt(+p.deltaRoll||0,3)}°</b></div>
     <div class="kv"><span>factor de zoom del objetivo</span><b>${zoomDe(p)===null?"—":"×"+fmt(zoomDe(p),2)}</b></div>
     <div class="kv"><span>uso</span><b>${USOS[p.uso||"foto"]}</b></div>
     <div class="kv"><span>cámara asociada</span><b>${p.camaraId?nombreCamara(p.camaraId):"ninguna"}</b></div>
@@ -1875,7 +1911,7 @@ function uiAjustes(){
   ${deltaRaro(p)?`<div class="verdict v-no" style="text-align:left;font-weight:500">
     <b>δ = ${(p.delta>=0?"+":"")+fmt(p.delta,2)}° es imposible como desalineación mecánica.</b> El acelerómetro y el
     sensor de imagen difieren en décimas de grado. Con este valor, el móvil a plomo marca ${fmt(p.delta,0)}° de
-    cabeceo y todo lo que dependa del cabeceo sale mal: la altura, las oblicuas y la vertical de referencia.
+    inclinación frontal y todo lo que dependa de la inclinación frontal sale mal: la altura, las oblicuas y la vertical de referencia.
     Ponlo a cero para poder medir mientras recalibras, y al recalibrar anota la lectura del inclinómetro de la toma,
     que ahora es obligatoria.</div>
   <div class="btns"><button class="g" id="aDelta0">Poner δ a cero en este perfil</button></div>`:""}
@@ -1885,10 +1921,10 @@ function uiAjustes(){
     <div class="kv"><span>fecha</span><b>${new Date(p.datos.fecha).toLocaleString("es-ES")}</b></div>
     <div class="kv"><span>distancia a las marcas</span><b>${fmt(p.datos.d,1)} cm</b></div>
     <div class="kv"><span>altura de la lente</span><b>${fmt(p.datos.hCam,1)} cm</b></div>
-    <div class="kv"><span>lectura del sensor · cabeceo</span><b>${fmt(p.datos.sensor,2)}°</b></div>
-    <div class="kv"><span>lectura del sensor · balanceo</span><b>${p.datos.sensorRoll===null||p.datos.sensorRoll===undefined?"no anotada":fmt(p.datos.sensorRoll,2)+"°"}</b></div>
-    <div class="kv"><span>inclinación resuelta</span><b>${fmt(p.datos.phi,3)}°</b></div>
-    <div class="kv"><span>balanceo medido en las marcas</span><b>${p.datos.rho===null||p.datos.rho===undefined?"no determinado":fmt(p.datos.rho,3)+"°"}</b></div>
+    <div class="kv"><span>lectura del sensor · frontal</span><b>${fmt(p.datos.sensor,2)}°</b></div>
+    <div class="kv"><span>lectura del sensor · lateral</span><b>${p.datos.sensorRoll===null||p.datos.sensorRoll===undefined?"no anotada":fmt(p.datos.sensorRoll,2)+"°"}</b></div>
+    <div class="kv"><span>inclinación frontal resuelta</span><b>${fmt(p.datos.phi,3)}°</b></div>
+    <div class="kv"><span>inclinación lateral medida en las marcas</span><b>${p.datos.rho===null||p.datos.rho===undefined?"no determinado":fmt(p.datos.rho,3)+"°"}</b></div>
     <div class="kv"><span>error de ajuste</span><b>${fmt(p.datos.rms,2)} px${p.datos.rhoRms===null||p.datos.rhoRms===undefined?"":" · lateral "+fmt(p.datos.rhoRms,1)+" px"}</b></div>
   </div>
   <table><tr><th>Marca</th><th>Altura (cm)</th><th>Fila (px)</th><th>Columna (px)</th><th>Desajuste (px)</th></tr>
@@ -1921,7 +1957,7 @@ function uiAjustes(){
 
   <h3>Incertidumbres de entrada</h3>
   <div class="row"><label>Error de marcado</label><input type="number" step="0.5" id="aUpx" value="${S.med.upx}"><span class="u">px</span></div>
-  <div class="row"><label>Error del cabeceo</label><input type="number" step="0.05" id="aUphi" value="${S.med.uphi}"><span class="u">°</span></div>
+  <div class="row"><label>Error de la inclinación frontal</label><input type="number" step="0.05" id="aUphi" value="${S.med.uphi}"><span class="u">°</span></div>
   <div class="note">u(marcado) es la repetibilidad al poner la cruz sobre el punto; 2 a 3 px es realista con zoom.
   u(inclinación) cubre el ruido del sensor más el residuo de la desalineación.</div>
 
@@ -2111,7 +2147,7 @@ function enlaza(){
       +"midas δ.\n\n¿Guardar con δ = 0?")) return;
     if(o.delta!==null && Math.abs(o.delta)>DELTA_MAX && !confirm("δ = "+fmt(o.delta,2)+"° no es creíble: la "
       +"desalineación mecánica es de décimas de grado.\n\nSi lo guardas, la aplicación medirá con ese error de "
-      +"cabeceo.\n\n¿Guardar de todas formas?")) return;
+      +"inclinación frontal.\n\n¿Guardar de todas formas?")) return;
     S.perfiles.push({id,name,fRel:o.fRel,y0Rel:o.y0Rel,delta:o.delta===null?0:o.delta,
       deltaRoll:(o.deltaRoll===null||o.deltaRoll===undefined)?0:+o.deltaRoll.toFixed(3), uF:0.40,
       w:S.src.w, h:S.src.h, camaraId:S.calib.camaraId||"", uso:S.calib.uso||"foto",
@@ -2162,7 +2198,7 @@ function enlaza(){
   on("aDelta0","click",()=>{
     const p=perfil(); if(!p) return;
     if(!confirm("¿Poner δ = 0 en «"+p.name+"»?\n\nValor actual: "+fmt(p.delta,3)+"°\n\n"
-      +"Con δ = 0 el cabeceo que use la aplicación será el que marque el inclinómetro, sin corrección. "
+      +"Con δ = 0 la inclinación frontal que use la aplicación será el que marque el inclinómetro, sin corrección. "
       +"Es lo correcto mientras no haya una δ bien medida.")) return;
     p.note=(p.note||"")+" · δ puesta a 0 (valor anterior "+fmt(p.delta,3)+"°, no creíble)";
     p.delta=0; guarda(); pinta();
