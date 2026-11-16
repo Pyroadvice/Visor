@@ -164,7 +164,7 @@ const S = {
   sel:-1,                 // -1 = origen ; 0..n-1 = índice de punto
   paso:"fino",            // fino | normal
   view:{s:1, tx:0, ty:0, fit:1},
-  calib:{ puntos:[], d:100, hCam:0, sensor:0, out:null, tipo:"phi", camaraId:"", origen:"", capId:"", uso:"foto" },
+  calib:{ puntos:[], d:100, hCam:0, sensor:0, sensorRoll:"", out:null, tipo:"phi", camaraId:"", origen:"", capId:"", uso:"foto" },
   reticula:false,
   liveErr:"",
   cams:[], capturas:[], capErr:"", camDistinta:false,
@@ -356,14 +356,23 @@ function tiltUsado(){
   return +S.med.phiManual + dl;
 }
 function phiSupuesto(){ return !esVivo() && vacio(S.med.phiManual); }
+/* Al balanceo leído se le suma la desalineación de balanceo del perfil, igual
+   que al cabeceo se le suma delta. El cero del sensor y el cero de las filas
+   del sensor de imagen no coinciden, y esa diferencia es fija por objetivo. */
 function rollUsado(){
-  if (esVivo()) return mediaRoll().r;
-  return vacio(S.med.rollManual) ? null : +S.med.rollManual;
+  const dr = perfil() ? (+perfil().deltaRoll || 0) : 0;
+  if (esVivo()){ const m=mediaRoll().r; return m===null?null:m+dr; }
+  return vacio(S.med.rollManual) ? null : +S.med.rollManual + dr;
 }
 /* Umbrales de balanceo lateral. Recomendación propia, no requisito normativo:
    mantienen la contribución del balanceo por debajo del 1 % de la altura en
    los encuadres realistas. Ver nota en la interfaz. */
 const ROLL_OK = 1.0, ROLL_AVISO = 3.0;
+/* Incertidumbre del balanceo una vez corregido. Con el móvil casi vertical la
+   lectura de balanceo sale de atan2(gx,gy) y el redondeo del acelerómetro a
+   0,1 m/s² se traduce en 0,1/9,8 rad ≈ 0,6°. Si no hay ninguna lectura de
+   balanceo (foto de un tercero sin dato), se presupuesta el límite de aviso. */
+const U_ROLL = 0.6, U_ROLL_DESC = ROLL_AVISO;
 function semaforoRoll(r){
   if (r===null) return {cls:"v-na", txt:"sin lectura"};
   const a=Math.abs(r);
@@ -386,14 +395,44 @@ function desajustePerfil(){
   if(Math.abs(aP-aS)/aP>0.02) return {aP,aS,pw:p.w,ph:p.h};
   return null;
 }
+/* Balanceo y perspectiva lateral.
+
+   Dos efectos distintos hacen que una vertical del mundo NO caiga sobre una
+   columna de la imagen, y conviene no confundirlos:
+
+   1) BALANCEO (ρ). Si el móvil está girado sobre su eje óptico, toda la imagen
+      gira ρ. Se corrige girando las coordenadas −ρ en torno al centro óptico,
+      que es lo que hace yEf: devuelve la fila que tendría el punto con la
+      imagen puesta a plomo. Así el balanceo deja de ser un error que haya que
+      presupuestar y pasa a ser una corrección.
+
+   2) PERSPECTIVA (convergencia de verticales). Aun a plomo perfecto, una
+      vertical del mundo solo se proyecta sobre una columna constante si pasa
+      por el centro óptico. Fuera de él, la columna es
+          x − x₀ = f·(a/d) / (r·sen φ + cos φ)
+      es decir, se separa del centro al acercarse al horizonte. Sigue siendo
+      una RECTA, pero inclinada. Es el efecto de las fachadas que convergen al
+      fotografiarlas desde abajo, y no es un defecto del equipo.
+
+   Ninguno de los dos altera la FILA de un punto por sí mismo: con cabeceo puro
+   la fila depende solo de la altura y la distancia, no de la posición lateral.
+   Por eso una vertical que no cuadre no invalida las alturas medidas.        */
 function geom(){
   const p = perfil(), src = S.src;
   if (!src || !p) return null;
-  const f = p.fRel*src.h, y0 = p.y0Rel*src.h;
+  const f = p.fRel*src.h, y0 = p.y0Rel*src.h, x0 = src.w/2;
   const phi = (tiltUsado() ?? 0)*Math.PI/180;
-  const r = y => Math.tan(Math.atan((y0-y)/f) + phi);
-  const yDe = rr => y0 - f*Math.tan(Math.atan(rr) - phi);
-  return {f, y0, phi, r, yDe};
+  const rho = (rollUsado() ?? 0)*Math.PI/180;
+  const cR = Math.cos(rho), sR = Math.sin(rho);
+  /* coordenadas a plomo (u lateral, v fila) ← imagen */
+  const uDe = (y,x) => ((x==null?x0:x)-x0)*cR + (y-y0)*sR;
+  const vDe = (y,x) => -((x==null?x0:x)-x0)*sR + (y-y0)*cR;
+  const yEf = (y,x) => y0 + vDe(y,x);
+  /* imagen ← coordenadas a plomo */
+  const aImgR = (u,v) => ({x: x0 + u*cR - v*sR, y: y0 + u*sR + v*cR});
+  const r  = (y,x) => Math.tan(Math.atan(-vDe(y,x)/f) + phi);
+  const yDe = rr => y0 - f*Math.tan(Math.atan(rr) - phi);   // fila a plomo
+  return {f, y0, x0, phi, rho, cR, sR, r, yDe, yEf, uDe, vDe, aImgR};
 }
 function medidas(){
   const g = geom(); if (!g || S.marks.origen===null) return null;
@@ -404,24 +443,28 @@ function medidas(){
     const rr = y => Math.tan(Math.atan((y0v-y)/fv) + phiv*Math.PI/180);
     return (rr(ytv)-rr(yov))*dv;
   };
-  const ro = g.r(yo);
+  const yoE = g.yEf(yo,xo);
+  const ro = g.r(yo,xo);
   return S.marks.puntos.map(q=>{
     if (q.y===null) return {lab:q.lab, y:null};
-    const rt = g.r(q.y), dr = rt-ro, dH = dr*d;
-    const base = con(g.f,g.y0,phi0,d,yo,q.y);
+    const ytE = g.yEf(q.y,q.x);
+    const rt = g.r(q.y,q.x), dr = rt-ro, dH = dr*d;
+    const base = con(g.f,g.y0,phi0,d,yoE,ytE);
     const cDist = Math.abs(dH)*(+S.med.ud)/100;
-    const cF    = Math.abs(con(g.f*(1+(+p.uF)/100),g.y0,phi0,d,yo,q.y)-base);
-    const cPhi  = Math.abs(con(g.f,g.y0,phi0+(+S.med.uphi),d,yo,q.y)-base);
+    const cF    = Math.abs(con(g.f*(1+(+p.uF)/100),g.y0,phi0,d,yoE,ytE)-base);
+    const cPhi  = Math.abs(con(g.f,g.y0,phi0+(+S.med.uphi),d,yoE,ytE)-base);
     const upx   = +S.med.upx;
-    const cPo   = Math.abs(con(g.f,g.y0,phi0,d,yo+upx,q.y)-base);
-    const cPt   = Math.abs(con(g.f,g.y0,phi0,d,yo,q.y+upx)-base);
-    /* Balanceo lateral: si la imagen está girada ρ, un punto separado Δx
-       horizontalmente del origen aparenta un desplazamiento vertical
-       Δx·sen ρ. El error en Δr es (Δx/f)·sen ρ y se anula exactamente
-       cuando origen y punto están en la misma vertical de la imagen. */
+    const cPo   = Math.abs(con(g.f,g.y0,phi0,d,yoE+upx,ytE)-base);
+    const cPt   = Math.abs(con(g.f,g.y0,phi0,d,yoE,ytE+upx)-base);
+    /* Balanceo lateral. El giro de la imagen YA se corrige en geom(), así que
+       lo que queda aquí no es el balanceo sino su INCERTIDUMBRE: un punto
+       separado Δx del origen arrastra un error (Δx/f)·sen(u_ρ). Se anula
+       exactamente cuando origen y punto quedan en la misma vertical, que
+       sigue siendo la mejor práctica de campo. */
     const dx = (q.x===null||xo===null) ? null : (q.x-xo);
-    const cRoll = (dx===null||roll===null) ? 0
-                : Math.abs(dx/g.f*Math.sin(roll*Math.PI/180))*d;
+    const uRoll = roll===null ? U_ROLL_DESC : U_ROLL;
+    const cRoll = dx===null ? 0
+                : Math.abs(dx/g.f*Math.sin(uRoll*Math.PI/180))*d;
     const uc = Math.hypot(cDist,cF,cPhi,cPo,cPt,cRoll), U = 2*uc;
     return {lab:q.lab, y:q.y, x:q.x, dx, ro, rt, dr, dH, H:dH+(+S.med.hRef||0), uc, U,
             comp:{cDist,cF,cPhi,cPo,cPt,cRoll},
@@ -484,20 +527,31 @@ function dibuja(){
   if (S.reticula) dibujaReticula();
   cruz();
 }
+/* La línea de una marca señala SU ALTURA, y una altura constante es una
+   horizontal del mundo: con la imagen girada ρ aparece girada ρ también. Se
+   dibuja con esa pendiente y pivotando en la columna de la propia marca, para
+   que no desmienta a las líneas de altura de referencia, que sí la llevan. */
 function linea(iy,col,lab,activa,ix){
   const py = aPan(0,iy).y;
-  if (py<-24||py>H+24) return;
+  /* En Calibración no se gira: ahí el balanceo que se lee es el de ahora, no
+     el de la captura que se está midiendo, y girar por él engañaría. */
+  const rl = S.modo==="calib" ? null : rollUsado();
+  const tg = rl===null?0:Math.tan(rl*Math.PI/180);
+  const px0 = (ix===null||ix===undefined) ? aPan((S.src?S.src.w/2:0),0).x : aPan(ix,0).x;
+  const yEn = xq => py + (xq-px0)*tg;
+  if (Math.max(yEn(0),yEn(W))<-24 || Math.min(yEn(0),yEn(W))>H+24) return;
   ctx.strokeStyle=col; ctx.lineWidth=activa?2.2:1.4;
   ctx.setLineDash(activa?[]:[7,5]);
-  ctx.beginPath(); ctx.moveTo(0,py); ctx.lineTo(W,py); ctx.stroke(); ctx.setLineDash([]);
+  ctx.beginPath(); ctx.moveTo(0,yEn(0)); ctx.lineTo(W,yEn(W)); ctx.stroke(); ctx.setLineDash([]);
   if (ix!==null && ix!==undefined){           // marca de posición lateral
-    const px = aPan(ix,0).x;
-    ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(px,py-7); ctx.lineTo(px,py+7); ctx.stroke();
+    const px = aPan(ix,0).x, pyx = yEn(px);
+    ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(px,pyx-7); ctx.lineTo(px,pyx+7); ctx.stroke();
   }
   ctx.font="600 11px ui-monospace,monospace";
   const w = ctx.measureText(lab).width;
-  ctx.fillStyle="rgba(0,0,0,.6)"; ctx.fillRect(4,py-16,w+8,14);
-  ctx.fillStyle=col; ctx.fillText(lab, 8, py-5);
+  const ly = yEn(4+w/2);
+  ctx.fillStyle="rgba(0,0,0,.6)"; ctx.fillRect(4,ly-16,w+8,14);
+  ctx.fillStyle=col; ctx.fillText(lab, 8, ly-5);
 }
 const lista = t => String(t||"").split(/[,;\s]+/).map(x=>parseFloat(x.replace(",","."))).filter(x=>isFinite(x)&&x>0);
 
@@ -518,20 +572,23 @@ const lista = t => String(t||"").split(/[,;\s]+/).map(x=>parseFloat(x.replace(",
 function dibujaOblicuas(){
   const g=geom(); if(!g||S.marks.origen===null) return;
   const d=+S.med.d; if(!d) return;
-  const ro=g.r(S.marks.origen.y), xo=S.marks.origen.x;
+  const xo=S.marks.origen.x;
   if(xo===null||xo===undefined) return;
+  const ro=g.r(S.marks.origen.y,xo), uo=g.uDe(S.marks.origen.y,xo);
+  /* tangente lateral del origen: a/d, despejada de su propia columna */
+  const A=uo*(ro*Math.sin(g.phi)+Math.cos(g.phi))/g.f;
   const angs=lista(S.med.angulos);
   const cols=["#bc8cff","#39c5cf","#f778ba","#d29922"];
   ctx.font="600 11px ui-monospace,monospace";
   // vertical de referencia
-  traza(g,ro,xo,0,"rgba(255,255,255,.45)",null);
+  traza(g,ro,A,0,"rgba(255,255,255,.45)",null);
   angs.forEach((a,k)=>{
     const col=cols[k%cols.length];
-    traza(g,ro,xo,+a,col,a+"°"); traza(g,ro,xo,-a,col,null);
+    traza(g,ro,A,+a,col,a+"°"); traza(g,ro,A,-a,col,null);
   });
 }
-function traza(g,ro,xo,angDeg,col,lab){
-  const th=angDeg*Math.PI/180, tg=Math.tan(th);
+function traza(g,ro,A,angDeg,col,lab){
+  const tg=Math.tan(angDeg*Math.PI/180);
   const sp=Math.sin(g.phi), cp=Math.cos(g.phi);
   ctx.strokeStyle=col; ctx.lineWidth=angDeg===0?1:1.6; ctx.setLineDash(angDeg===0?[4,6]:[]);
   ctx.beginPath();
@@ -539,7 +596,7 @@ function traza(g,ro,xo,angDeg,col,lab){
   for(let t=0;t<=4;t+=0.01){
     const r=ro+t, den=r*sp+cp;
     if(den<=0.02) break;                       // el punto se va al infinito
-    const y=g.yDe(r), x=xo+g.f*t*tg/den, p=aPan(x,y);
+    const q=g.aImgR(g.f*(A+t*tg)/den, g.yDe(r)-g.y0), p=aPan(q.x,q.y);
     if(p.y<-80) break;
     if(primero){ ctx.moveTo(p.x,p.y); primero=false; } else ctx.lineTo(p.x,p.y);
     ult=p;
@@ -547,40 +604,44 @@ function traza(g,ro,xo,angDeg,col,lab){
   ctx.stroke(); ctx.setLineDash([]);
   if(lab&&ult){ ctx.fillStyle=col; ctx.fillText(lab, ult.x+5, ult.y+12); }
 }
+/* Recta horizontal del mundo a la fila a plomo v. Con balanceo ρ no es
+   horizontal en pantalla: aparece girada exactamente ρ, igual que el resto de
+   la imagen. Se dibuja en coordenadas a plomo y se gira al final. */
+function lineaMundo(g,v,col,lw,dash,lab,der){
+  const L=(S.src.w+S.src.h)*2;
+  const q1=g.aImgR(-L,v), q2=g.aImgR(L,v);
+  const a=aPan(q1.x,q1.y), b=aPan(q2.x,q2.y);
+  if (Math.max(a.y,b.y)<-30 || Math.min(a.y,b.y)>H+30) return;
+  ctx.strokeStyle=col; ctx.lineWidth=lw; ctx.setLineDash(dash);
+  ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); ctx.setLineDash([]);
+  if(!lab) return;
+  const yEn = xq => a.y + (b.y-a.y)*(xq-a.x)/((b.x-a.x)||1);
+  const w=ctx.measureText(lab).width;
+  const px = der ? W-w-14 : 4;
+  const py = yEn(px+w/2);
+  ctx.fillStyle="rgba(0,0,0,.6)"; ctx.fillRect(px,py-16,w+8,14);
+  ctx.fillStyle=col; ctx.fillText(lab, px+4, py-5);
+}
 /* Alturas de referencia sobre el punto de disparo. */
 function dibujaHorizontales(){
   const g=geom(); if(!g||S.marks.origen===null) return;
   const d=+S.med.d; if(!d) return;
-  const ro=g.r(S.marks.origen.y);
+  const ro=g.r(S.marks.origen.y,S.marks.origen.x);
   ctx.font="600 11px ui-monospace,monospace";
-  for(const H of lista(S.med.alturas)){
-    const py=aPan(0,g.yDe(ro+H/d)).y;
-    if(py<-30||py>H_()+30) continue;
-    ctx.strokeStyle="#39c5cf"; ctx.lineWidth=1.4; ctx.setLineDash([10,4]);
-    ctx.beginPath(); ctx.moveTo(0,py); ctx.lineTo(W,py); ctx.stroke(); ctx.setLineDash([]);
-    const lab=fmt(H,0)+" m";
-    const w=ctx.measureText(lab).width;
-    ctx.fillStyle="rgba(0,0,0,.6)"; ctx.fillRect(W-w-14,py-16,w+10,14);
-    ctx.fillStyle="#39c5cf"; ctx.fillText(lab, W-w-9, py-5);
-  }
+  for(const Hv of lista(S.med.alturas))
+    lineaMundo(g, g.yDe(ro+Hv/d)-g.y0, "#39c5cf", 1.4, [10,4], fmt(Hv,0)+" m", true);
 }
-const H_=()=>H;
 function dibujaReticula(){
   const g=geom(); if(!g||S.marks.origen===null) return;
   const d=+S.med.d, hn=+S.med.hNom, tol=+S.med.tol;
   if (!hn||!d) return;
-  const ro = g.r(S.marks.origen.y);
+  const ro = g.r(S.marks.origen.y,S.marks.origen.x);
   const sets=[[hn,"#8b949e","nominal"],[hn*(1+tol/100),"#f85149","+"+fmt(tol,0)+"%"],
               [hn*(1-tol/100),"#f85149","−"+fmt(tol,0)+"%"]];
   ctx.font="600 11px ui-monospace,monospace";
-  for (const [hv,col,lab] of sets){
-    const py = aPan(0, g.yDe(ro + hv/d)).y;
-    if (py<-30||py>H+30) continue;
-    ctx.strokeStyle=col; ctx.lineWidth=lab==="nominal"?1:1.8;
-    ctx.setLineDash(lab==="nominal"?[3,6]:[]);
-    ctx.beginPath(); ctx.moveTo(0,py); ctx.lineTo(W,py); ctx.stroke(); ctx.setLineDash([]);
-    ctx.fillStyle=col; ctx.fillText(lab+"  "+fmt(hv,1)+" m", 6, py+13);
-  }
+  for (const [hv,col,lab] of sets)
+    lineaMundo(g, g.yDe(ro+hv/d)-g.y0, col, lab==="nominal"?1:1.8,
+               lab==="nominal"?[3,6]:[], lab+"  "+fmt(hv,1)+" m", false);
 }
 function cruz(){
   const cx=W/2, cy=H/2;
@@ -759,7 +820,7 @@ async function cargaImagen(file){
   S.src={kind:"img", el:bmp, w:bmp.width, h:bmp.height};
   S.srcCamId="";                 // un archivo no viene de ninguna cámara de este aparato
   limpiaMarcas();
-  if (S.modo==="calib"){ S.calib.puntos.forEach(p=>p.y=null); S.calib.out=null;
+  if (S.modo==="calib"){ S.calib.puntos.forEach(p=>{p.y=null;p.x=null;}); S.calib.out=null;
     S.calib.origen="archivo"; S.calib.capId=""; S.calib.uso="foto";
     /* No se borra la cámara elegida: lo normal es calibrar varias fotos de la
        misma cámara seguidas, y volver a elegirla cada vez sería un estorbo. */ }
@@ -815,9 +876,12 @@ async function capturaCalib(){
   c.width=S.src.w; c.height=S.src.h;
   c.getContext("2d").drawImage(S.src.el,0,0);
   const blob=await new Promise(r=>c.toBlob(r,"image/jpeg",0.92));
+  /* Se guardan los ángulos del sensor EN EL INSTANTE de la captura: después no
+     hay forma de recuperarlos, y sin el balanceo no se puede obtener δρ. */
+  const M=media(), MR=mediaRoll();
   const o={id:"c"+Date.now(), ts:Date.now(), w:S.src.w, h:S.src.h,
            camaraId:S.camaraId||"", camLabel: nombreCamara(S.camaraId),
-           zoom:S.zoomActual??null, blob};
+           zoom:S.zoomActual??null, senP:M.p, senR:MR.r, blob};
   try{ await idbPut(o); S.capErr=""; }catch(e){ S.capErr="No se pudo guardar la captura: "+e.message; }
   await cargaCapturas();
 }
@@ -831,7 +895,9 @@ async function usaCaptura(id){
      completo: «solo desalineación» no permite crear un perfil nuevo. */
   if(!perfilDeCamara(c.camaraId)) S.calib.tipo="full";
   S.calib.origen="captura"; S.calib.capId=c.id; S.calib.uso="vivo";
-  limpiaMarcas(); S.calib.puntos.forEach(p=>p.y=null); S.calib.out=null;
+  if(c.senP!==null&&c.senP!==undefined) S.calib.sensor=+c.senP.toFixed(2);
+  if(c.senR!==null&&c.senR!==undefined) S.calib.sensorRoll=+c.senR.toFixed(2);
+  limpiaMarcas(); S.calib.puntos.forEach(p=>{p.y=null;p.x=null;}); S.calib.out=null;
   encaja(); $("#hint").classList.add("hide"); pinta();
 }
 function cerrarCamara(){
@@ -959,6 +1025,67 @@ function resuelve3(A,b){
   }
   return [M[0][3]/M[0][0], M[1][3]/M[1][1], M[2][3]/M[2][2]];
 }
+/* Balanceo real de la imagen, medido sobre las propias marcas.
+
+   Las marcas de calibración están TODAS en una misma vertical de la pared. En
+   la imagen deberían caer sobre una recta cuya inclinación tiene dos causas
+   sumadas: la perspectiva, que es calculable, y el balanceo, que no se conoce.
+   Quitada la primera, lo que queda es el balanceo del sensor de imagen en el
+   momento de la toma, y comparado con lo que marcaba el inclinómetro da la
+   DESALINEACIÓN DE BALANCEO, el equivalente lateral de δ.
+
+   Convenio: con la imagen girada ρ, una vertical del mundo se desplaza hacia
+   la izquierda al bajar por la imagen, luego pendiente dx/dy = −tan ρ.
+
+   Lo que NO se puede hacer: dejar libre la columna del centro óptico. Sobre un
+   tramo vertical corto la curva de perspectiva 1/(r·sen φ + cos φ) es casi una
+   recta en y, así que si se le permite un término constante propio absorbe
+   toda la inclinación y el balanceo sale siempre cero. Se verificó con escena
+   sintética: con ρ real de 0,75° el ajuste libre devolvía 0,000°.
+
+   Con x₀ fijado en el centro del fotograma el sistema sí separa los dos
+   efectos, y lo hace exactamente, con las marcas centradas o desviadas casi un
+   metro, y con cabeceos de 0,5° o de 8°. El límite pasa a ser lo que se
+   desconoce de x₀: un punto principal desplazado 30 px sobre 3000 sesga ρ en
+   0,09°, y eso se calcula aquí perturbando x₀ un 1 % del ancho.             */
+function ajustaRoll(pts,f,y0,x0,phi,w){
+  const p=pts.filter(q=>q.x!==null&&q.x!==undefined&&isFinite(+q.x));
+  if(p.length<3) return null;
+  const dy=Math.max(...p.map(q=>q.y))-Math.min(...p.map(q=>q.y));
+  if(dy<100) return null;
+  const sp=Math.sin(phi*Math.PI/180), cp=Math.cos(phi*Math.PI/180);
+  const g=q=>1/(Math.tan(Math.atan((y0-q.y)/f)+phi*Math.PI/180)*sp+cp);
+  /* x − x₀ = f·A·g + s·(y − y₀) ; A tangente lateral, s pendiente del giro */
+  const fit=xc=>{
+    let a11=0,a12=0,a22=0,b1=0,b2=0;
+    for(const q of p){
+      const G=f*g(q), Y=q.y-y0, X=(+q.x)-xc;
+      a11+=G*G; a12+=G*Y; a22+=Y*Y; b1+=G*X; b2+=Y*X;
+    }
+    const det=a11*a22-a12*a12;
+    if(Math.abs(det)<1e-9) return null;
+    const A=(b1*a22-a12*b2)/det, s=(a11*b2-a12*b1)/det;
+    let rms=0;
+    for(const q of p){ const e=((+q.x)-xc)-(f*A*g(q)+s*(q.y-y0)); rms+=e*e; }
+    return {A, s, rms:Math.sqrt(rms/p.length)};
+  };
+  const o=fit(x0); if(!o) return null;
+  const o2=fit(x0+0.01*w);
+  const rho=-Math.atan(o.s)*180/Math.PI;
+  /* Dos fuentes: lo que se desconoce de x₀ y el ruido al poner las cruces.
+     La segunda es el error típico de la pendiente, rms/√Σ(y−ȳ)². */
+  const uX0=o2 ? Math.abs(-Math.atan(o2.s)*180/Math.PI - rho) : 0;
+  const ym=p.reduce((s,q)=>s+q.y,0)/p.length;
+  const Syy=p.reduce((s,q)=>s+(q.y-ym)*(q.y-ym),0);
+  const uN=Syy>0 ? o.rms/Math.sqrt(Syy)*180/Math.PI : 0;
+  const u=Math.hypot(uX0,uN);
+  /* inclinación total observada, extremo a extremo, para poder contrastar */
+  const or=p.slice().sort((a,b)=>a.y-b.y);
+  const pend=(or[or.length-1].x-or[0].x)/(or[or.length-1].y-or[0].y);
+  return {rho, u, rms:o.rms, n:p.length, lat:o.A,
+          total:-Math.atan(pend)*180/Math.PI,
+          deriva:Math.max(...p.map(q=>+q.x))-Math.min(...p.map(q=>+q.x))};
+}
 function ajusta(){
   const pts0 = S.calib.puntos.filter(p=>p.y!==null && isFinite(+p.h));
   const min = S.calib.tipo==="phi" ? 2 : 3;
@@ -970,8 +1097,10 @@ function ajusta(){
   if (S.calib.tipo==="phi"){
     const p=perfil(), f=p.fRel*S.src.h, y0=p.y0Rel*S.src.h;
     const o = ajustaSoloPhi(pts0,d,hc,f,y0);
+    const rl = ajustaRoll(pts0,f,y0,S.src.w/2,o.phi,S.src.w);
     return {tipo:"phi", f, y0, phi:o.phi, res:o.res, rms:rmsDe(o.res), n:pts0.length,
-            fRel:p.fRel, y0Rel:p.y0Rel, delta:o.phi-(+S.calib.sensor||0)};
+            fRel:p.fRel, y0Rel:p.y0Rel, delta:o.phi-(+S.calib.sensor||0),
+            roll:rl, deltaRoll: (rl && !vacio(S.calib.sensorRoll)) ? rl.rho-(+S.calib.sensorRoll) : null};
   }
   const A=[], b=[];
   for (const p of pts0){ const r=(+p.h-hc)/d; A.push([1,r,p.y*r]); b.push(p.y); }
@@ -981,8 +1110,10 @@ function ajusta(){
   const f=(a1*t-b1)/(1+t*t), y0=a1-f*t, phi=Math.atan(t)*180/Math.PI;
   if (!isFinite(f)||f<=0) return {err:"Ajuste sin sentido físico. Revisa alturas y distancia."};
   const res = residuos(pts0,f,y0,phi,d,hc), hImg=S.src.h;
+  const rl = ajustaRoll(pts0,f,y0,S.src.w/2,phi,S.src.w);
   return {tipo:"full", f, y0, phi, rms:rmsDe(res), res, n:pts0.length,
-          fRel:f/hImg, y0Rel:y0/hImg, delta:phi-(+S.calib.sensor||0)};
+          fRel:f/hImg, y0Rel:y0/hImg, delta:phi-(+S.calib.sensor||0),
+          roll:rl, deltaRoll: (rl && !vacio(S.calib.sensorRoll)) ? rl.rho-(+S.calib.sensorRoll) : null};
 }
 
 /* -------------------------------------------------------------- interfaz */
@@ -1163,7 +1294,7 @@ function uiMedida(m){
     <div class="row"><label>Balanceo (lateral)</label><input type="number" step="0.01" id="iRoll"
       value="${S.med.rollManual??""}" placeholder="opcional"><span class="u">°</span></div>`;
     if (phiSupuesto()) h += `<div class="verdict v-na">Sin cabeceo: se supone cámara a plomo</div>`;
-    else if (rl!==null && sem.cls!=="v-ok") h += `<div class="verdict ${sem.cls}">Balanceo ${fmt(Math.abs(rl),1)}°: revisa la columna Δx</div>`;
+    else if (rl!==null && sem.cls!=="v-ok") h += `<div class="verdict ${sem.cls}">Balanceo ${fmt(Math.abs(rl),1)}°: se corrige, pero deja origen y punto en la misma vertical</div>`;
   }
 
   if (T){
@@ -1246,6 +1377,14 @@ function uiMedida(m){
   para voladores. Son rectas, como corresponde a la proyección de una recta del espacio, pero su separación lateral
   depende del cabeceo: un punto alto queda a distinta distancia del plano imagen que el punto de disparo, y eso
   reescala la separación. Por eso <b>se recalculan al cambiar el cabeceo</b> en vez de trazarse con una pendiente fija.
+  <br><br><b>La vertical de referencia casi nunca es una columna de la foto.</b> Una vertical del mundo solo cae sobre
+  una columna si pasa por el centro óptico; fuera de él se proyecta inclinada y convergiendo hacia el horizonte, igual
+  que las fachadas fotografiadas desde abajo. Se dibuja ya con esa inclinación, junto con el giro de la imagen, así que
+  debe cruzar una vertical real de principio a fin. Si no la cruza, hay tres causas y se distinguen por su forma:
+  desviación recta uniforme es balanceo mal puesto a cero, hay que medir δρ en Calibración; desviación que se curva
+  hacia los bordes es distorsión del objetivo, y conviene medir hacia el centro del fotograma; y un solo punto fuera de
+  la recta es la cruz mal colocada. <b>Ninguna de las tres altera la altura medida</b> mientras origen y punto estén
+  poco separados en horizontal: con cabeceo puro la fila de un punto depende solo de su altura y su distancia.
   <br><br><b>Limitación que conviene tener presente.</b> La imagen solo da la <b>proyección</b> del ángulo: si el
   volador se desvía hacia la cámara o alejándose de ella, el ángulo aparente es menor que el real. Un artículo que
   salga fuera de las líneas incumple con seguridad; uno que quede dentro no queda acreditado como conforme. Para
@@ -1270,8 +1409,10 @@ function uiMedida(m){
       </table>
       <div class="note">r<sub>origen</sub> = ${fmt(100*sx.ro,2)} % · r<sub>punto</sub> = ${fmt(100*sx.rt,2)} % ·
       suma ${fmt(100*(sx.ro+sx.rt),2)} %, que es el factor del error de cabeceo y de focal.
-      Separación horizontal origen-punto ${sx.dx===null?"no registrada":fmt(sx.dx,0)+" px"}${rl===null?"":", con ρ = "+fmt(rl,2)+"°"},
-      que es el factor del error de balanceo: (Δx/f)·sen ρ.</div>`;
+      Separación horizontal origen-punto ${sx.dx===null?"no registrada":fmt(sx.dx,0)+" px"}${rl===null?"":", con ρ = "+fmt(rl,2)+"° ya corregido"}.
+      El giro de la imagen se descuenta antes de leer la fila, así que lo que queda en el presupuesto no es el balanceo sino su incertidumbre:
+      (Δx/f)·sen(u<sub>ρ</sub>), con u<sub>ρ</sub> = ${fmt(rl===null?U_ROLL_DESC:U_ROLL,1)}°${rl===null?" por no haber lectura de balanceo":" por el redondeo del acelerómetro"}.
+      Sigue siendo preferible dejar origen y punto en la misma vertical: entonces el término se anula sin depender de nada.</div>`;
     }
   }
   if (T){
@@ -1282,6 +1423,7 @@ function uiMedida(m){
       <div class="kv"><span>distancia focal (f)</span><b>${fmt(g.f,1)} px (${fmt(perfil().fRel,5)})</b></div>
       <div class="kv"><span>centro óptico (y₀)</span><b>${fmt(g.y0,1)} px (${fmt(perfil().y0Rel,5)})</b></div>
       <div class="kv"><span>desalineación del sensor δ</span><b>${(perfil().delta>=0?"+":"")+fmt(perfil().delta,3)}°</b></div>
+      <div class="kv"><span>desalineación lateral δρ</span><b>${((+perfil().deltaRoll||0)>=0?"+":"")+fmt(+perfil().deltaRoll||0,3)}°</b></div>
       <div class="kv"><span>cabeceo aplicado</span><b>${tt===null?"—":(tt>=0?"+":"")+fmt(tt,3)+"°"}</b></div>
       <div class="kv"><span>error de marcado · de cabeceo</span><b>${fmt(S.med.upx,1)} px · ${fmt(S.med.uphi,2)}°</b></div>
       <div class="kv"><span>factor de cobertura k</span><b>k = 2</b></div>
@@ -1303,8 +1445,11 @@ function glosario(){
    ["Cabeceo, φ","Cuánto apunta la cámara hacia arriba o hacia abajo. El modelo lo usa como dato, no como error."],
    ["Balanceo, ρ","Cuánto está girada la cámara sobre su propio eje, el giro que tuerce el horizonte en la foto."],
    ["Desalineación del sensor, δ","Diferencia fija entre lo que marca el sensor del móvil y hacia dónde mira realmente la lente. Es una constante de cada aparato."],
+   ["Desalineación lateral, δρ","Lo mismo que δ pero en el giro: el cero de balanceo del inclinómetro no coincide con las filas del sensor de imagen. También es una constante del aparato, y se mide sobre marcas puestas en una misma vertical."],
+   ["Convergencia de verticales","Una vertical del mundo solo cae sobre una columna de la foto si pasa por el centro óptico. Fuera de él sale inclinada, igual que las fachadas fotografiadas desde abajo. No es un defecto del equipo y no altera las alturas medidas."],
    ["Focal, f","La distancia focal del objetivo expresada en píxeles de la imagen. Fija la escala angular de la foto."],
    ["Centro óptico, y₀","La fila de la imagen que atraviesa el eje de la lente. Casi, pero no exactamente, el centro del fotograma."],
+   ["Columna del centro óptico, x₀","La columna equivalente a y₀. La calibración no la determina, porque las marcas están todas en una vertical, así que se supone el centro del fotograma: de ahí sale el ±0,09° de la medida de balanceo."],
    ["Incertidumbre típica, u","El margen de error que aporta una causa concreta, expresado a una desviación típica."],
    ["Incertidumbre combinada, u_c","Todas las contribuciones sumadas en cuadratura, es decir por la raíz de la suma de cuadrados."],
    ["Incertidumbre ampliada, U","El margen final que se declara. Con k = 2 abarca en torno al 95 % de los casos."],
@@ -1548,17 +1693,21 @@ function uiCalib(){
   <h3>Geometría del ensayo</h3>
   <div class="row"><label>Distancia horiz.</label><input type="number" step="0.1" id="cD" value="${S.calib.d}"><span class="u">cm</span></div>
   <div class="row"><label>Altura de lente</label><input type="number" step="0.1" id="cHc" value="${S.calib.hCam}"><span class="u">cm</span></div>
-  <div class="row"><label>Lectura sensor</label><input type="number" step="0.01" id="cSen" value="${S.calib.sensor}"><span class="u">°</span></div>
-  <div class="note">La altura de la lente sobre el suelo es imprescindible: sin ella la inclinación y la altura de cámara son indistinguibles y el ajuste no significa nada.</div>
+  <div class="row"><label>Lectura sensor · cabeceo</label><input type="number" step="0.01" id="cSen" value="${S.calib.sensor}"><span class="u">°</span></div>
+  <div class="row"><label>Lectura sensor · balanceo</label><input type="number" step="0.01" id="cSenR" value="${S.calib.sensorRoll}" placeholder="opcional"><span class="u">°</span></div>
+  <div class="note">La altura de la lente sobre el suelo es imprescindible: sin ella la inclinación y la altura de cámara son indistinguibles y el ajuste no significa nada.
+  El balanceo es opcional, pero si lo anotas se obtiene también el cero lateral del inclinómetro.</div>
 
   <h3>Puntos</h3>
-  <table><tr><th>#</th><th>Altura (cm)</th><th>y (px)</th><th></th></tr>
+  <table><tr><th>#</th><th>Altura (cm)</th><th>y (px)</th><th>x (px)</th><th></th></tr>
   ${S.calib.puntos.map((p,i)=>`<tr>
     <td>${i+1}</td>
     <td><input type="number" step="0.1" class="cH" data-i="${i}" value="${p.h??""}"></td>
     <td>${p.y===null?"—":fmt(p.y,1)}</td>
+    <td>${p.x===null||p.x===undefined?"—":fmt(p.x,0)}</td>
     <td><button class="mini cFix" data-i="${i}">fijar</button></td>
   </tr>`).join("")}</table>
+  <div class="note">La columna <b>x</b> se guarda para medir el balanceo: todas las marcas están en una misma vertical de la pared, así que su desviación lateral en la imagen delata el giro de la cámara.</div>
   <div class="btns"><button id="cAdd">+ punto</button><button id="cDel">− punto</button>
     <button class="p" id="cRun">Ajustar</button></div>`;
 
@@ -1581,6 +1730,24 @@ function uiCalib(){
       <div class="verdict ${malo?"v-na":"v-ok"}">${malo
         ?"Ajuste pobre: revisa las alturas escritas, la distancia y que las marcas se vean nítidas"
         :"Ajuste correcto"}</div></div>
+      ${o.roll ? `<h3>Balanceo medido sobre las marcas</h3><div class="res">
+      <div class="kv"><span>inclinación observada de la línea de marcas</span><b>${(o.roll.total>=0?"+":"")+fmt(o.roll.total,3)}°</b></div>
+      <div class="kv"><span>parte explicada por la perspectiva</span><b>${(o.roll.total-o.roll.rho>=0?"+":"")+fmt(o.roll.total-o.roll.rho,3)}°</b></div>
+      <div class="big" style="margin-top:6px"><s>Balanceo real de la imagen (ρ)</s><b>${(o.roll.rho>=0?"+":"")+fmt(o.roll.rho,3)}°${o.roll.u!==null?" ± "+fmt(o.roll.u,3)+"°":""}</b></div>
+      <div class="kv"><span>deriva lateral de las marcas</span><b>${fmt(o.roll.deriva,0)} px de ${S.src.w}</b></div>
+      <div class="kv"><span>lo que marcaba el sensor</span><b>${vacio(S.calib.sensorRoll)?"sin anotar":((+S.calib.sensorRoll>=0?"+":"")+fmt(+S.calib.sensorRoll,2)+"°")}</b></div>
+      ${vacio(S.calib.sensorRoll)?"":`<div class="big"><s>Desfase lateral del sensor (δρ)</s><b>${(o.deltaRoll>=0?"+":"")+fmt(o.deltaRoll,3)}°</b></div>`}
+      <div class="kv"><span>curvatura residual</span><b>${fmt(o.roll.rms,1)} px</b></div>
+      <div class="verdict ${o.roll.rms>0.004*S.src.w?"v-na":"v-ok"}">${o.roll.rms>0.004*S.src.w
+        ?"Las marcas no caen en una recta: eso ya no es balanceo, es distorsión del objetivo o alguna cruz mal puesta"
+        :"Las marcas caen en una recta, como debe ser"}</div></div>
+      <div class="note"><b>Para qué sirve esto.</b> Que la vertical dibujada no cruce todas las marcas tiene dos causas sumadas, y aquí se separan.
+      Una es la perspectiva: una vertical del mundo que no pase por el centro óptico se proyecta inclinada, converge igual que las fachadas vistas desde abajo, y no es un defecto del equipo.
+      La otra es el balanceo real, que incluye el desfase entre el cero del inclinómetro y las filas del sensor de imagen, igual que δ en el cabeceo.
+      La <b>curvatura residual</b> es lo que queda sin explicar por ninguna de las dos: si es grande, hay distorsión de objetivo o un error al marcar.
+      Ninguno de los dos efectos altera la altura medida de una marca, porque con cabeceo puro la fila de un punto depende solo de su altura y su distancia, no de su posición lateral.
+      Sí la alteran cuando origen y punto están muy separados en horizontal, y por eso el balanceo se corrige y la separación lateral sigue presupuestándose.</div>
+      ${vacio(S.calib.sensorRoll)?`<div class="note">Anota arriba el balanceo que marcaba el inclinómetro en la toma y se obtendrá δρ, aplicable al perfil.</div>`:""}` : ""}
       <div class="note">Desajuste de cada marca, en píxeles: ${o.res.map(v=>fmt(v,1)).join(" / ")}.
       Si crece hacia las marcas de arriba y de abajo, suele ser distorsión del objetivo o una focal mal resuelta.
       Si todas fallan por igual, suele ser un error en la altura de la lente.
@@ -1588,6 +1755,8 @@ function uiCalib(){
       <div class="btns">
         ${o.tipo==="full"?'<button class="g" id="cSave">Guardar como perfil nuevo</button>'
                          :'<button class="g" id="cSaveD">Aplicar δ al perfil activo</button>'}
+        ${(o.tipo!=="full" && o.deltaRoll!==null && o.deltaRoll!==undefined)
+          ?'<button id="cSaveDR">Aplicar δρ al perfil activo</button>':""}
       </div>`;
     }
   }
@@ -1608,11 +1777,13 @@ function informeCalib(p){
     "| | |","|---|---|",
     "| Distancia al plano de las marcas | "+fmt(D.d,1)+" cm |",
     "| Altura de la lente sobre el suelo | "+fmt(D.hCam,1)+" cm |",
-    "| Lectura del inclinómetro en la toma | "+fmt(D.sensor,2)+"° |",
+    "| Lectura del inclinómetro en la toma · cabeceo | "+fmt(D.sensor,2)+"° |",
+    "| Lectura del inclinómetro en la toma · balanceo | "+(D.sensorRoll===null||D.sensorRoll===undefined?"no anotada":fmt(D.sensorRoll,2)+"°")+" |",
     "| Tipo de ajuste | "+(D.tipo==="phi"?"solo inclinación":"óptica completa")+" |","",
     "## Datos y desajustes","",
-    "| Marca | Altura (cm) | Fila en la imagen (px) | Desajuste (px) |","|---|---|---|---|");
-  D.puntos.forEach((q,i)=>L.push("| "+(i+1)+" | "+fmt(q.h,1)+" | "+fmt(q.y,1)+" | "+fmt(D.res[i],1)+" |"));
+    "| Marca | Altura (cm) | Fila y (px) | Columna x (px) | Desajuste (px) |","|---|---|---|---|---|");
+  D.puntos.forEach((q,i)=>L.push("| "+(i+1)+" | "+fmt(q.h,1)+" | "+fmt(q.y,1)+" | "
+    +(q.x===null||q.x===undefined?"—":fmt(q.x,0))+" | "+fmt(D.res[i],1)+" |"));
   L.push("","## Resultado","",
     "| | |","|---|---|",
     "| Distancia focal (f) | "+fmt(D.f,1)+" px |",
@@ -1620,7 +1791,10 @@ function informeCalib(p){
     "| Centro óptico (y₀) | "+fmt(D.y0,1)+" px ("+fmt(p.y0Rel,5)+") |",
     "| Inclinación resuelta de la toma | "+fmt(D.phi,3)+"° |",
     "| Desfase del sensor (δ) | "+fmt(p.delta,3)+"° |",
+    "| Desfase lateral del sensor (δρ) | "+((+p.deltaRoll||+p.deltaRoll===0)?fmt(+p.deltaRoll||0,3)+"°":"no determinado")+" |",
     "| Error de ajuste (rms) | "+fmt(D.rms,2)+" px |",
+    "| Balanceo medido sobre las marcas (ρ) | "+(D.rho===null||D.rho===undefined?"no determinado":fmt(D.rho,3)+"°")+" |",
+    "| Curvatura residual de la línea de marcas | "+(D.rhoRms===null||D.rhoRms===undefined?"—":fmt(D.rhoRms,1)+" px")+" |",
     "| Factor de zoom deducido | "+(zoomDe(p)===null?"—":"×"+fmt(zoomDe(p),2))+" |","",
     "## Modelo","",
     "r = tan( arctan( (y₀ − y) / f ) + φ );   altura = (r_punto − r_origen) · d","",
@@ -1633,7 +1807,10 @@ function informeCalib(p){
     "3. Las alturas de las marcas se toman como verdad absoluta: su error se traslada íntegro al resultado.",
     "4. Con todas las marcas en una sola vertical y a una sola distancia, focal, centro óptico e inclinación están",
     "   correlacionados. Un error de ajuste bajo no garantiza por sí solo que cada valor sea correcto; la",
-    "   comprobación es repetir sobre otra toma.","");
+    "   comprobación es repetir sobre otra toma.",
+    "5. El balanceo ρ se obtiene suponiendo que la columna del centro óptico es el centro del fotograma, porque con",
+    "   todas las marcas en una vertical la calibración no la determina. Un punto principal desplazado el 1 % del",
+    "   ancho sesga ρ en torno a 0,09°.","");
   return L.join("\n");
 }
 
@@ -1654,7 +1831,8 @@ function uiAjustes(){
   <div class="res">
     <div class="kv"><span>f / altura de fotograma</span><b>${fmt(p.fRel,5)}</b></div>
     <div class="kv"><span>centro óptico relativo</span><b>${fmt(p.y0Rel,5)}</b></div>
-    <div class="kv"><span>desalineación δ</span><b>${(p.delta>=0?"+":"")+fmt(p.delta,3)}°</b></div>
+    <div class="kv"><span>desalineación δ · cabeceo</span><b>${(p.delta>=0?"+":"")+fmt(p.delta,3)}°</b></div>
+    <div class="kv"><span>desalineación δρ · balanceo</span><b>${((+p.deltaRoll||0)>=0?"+":"")+fmt(+p.deltaRoll||0,3)}°</b></div>
     <div class="kv"><span>factor de zoom del objetivo</span><b>${zoomDe(p)===null?"—":"×"+fmt(zoomDe(p),2)}</b></div>
     <div class="kv"><span>uso</span><b>${USOS[p.uso||"foto"]}</b></div>
     <div class="kv"><span>cámara asociada</span><b>${p.camaraId?nombreCamara(p.camaraId):"ninguna"}</b></div>
@@ -1668,12 +1846,15 @@ function uiAjustes(){
     <div class="kv"><span>fecha</span><b>${new Date(p.datos.fecha).toLocaleString("es-ES")}</b></div>
     <div class="kv"><span>distancia a las marcas</span><b>${fmt(p.datos.d,1)} cm</b></div>
     <div class="kv"><span>altura de la lente</span><b>${fmt(p.datos.hCam,1)} cm</b></div>
-    <div class="kv"><span>lectura del sensor</span><b>${fmt(p.datos.sensor,2)}°</b></div>
+    <div class="kv"><span>lectura del sensor · cabeceo</span><b>${fmt(p.datos.sensor,2)}°</b></div>
+    <div class="kv"><span>lectura del sensor · balanceo</span><b>${p.datos.sensorRoll===null||p.datos.sensorRoll===undefined?"no anotada":fmt(p.datos.sensorRoll,2)+"°"}</b></div>
     <div class="kv"><span>inclinación resuelta</span><b>${fmt(p.datos.phi,3)}°</b></div>
-    <div class="kv"><span>error de ajuste</span><b>${fmt(p.datos.rms,2)} px</b></div>
+    <div class="kv"><span>balanceo medido en las marcas</span><b>${p.datos.rho===null||p.datos.rho===undefined?"no determinado":fmt(p.datos.rho,3)+"°"}</b></div>
+    <div class="kv"><span>error de ajuste</span><b>${fmt(p.datos.rms,2)} px${p.datos.rhoRms===null||p.datos.rhoRms===undefined?"":" · lateral "+fmt(p.datos.rhoRms,1)+" px"}</b></div>
   </div>
-  <table><tr><th>Marca</th><th>Altura (cm)</th><th>Fila (px)</th><th>Desajuste (px)</th></tr>
+  <table><tr><th>Marca</th><th>Altura (cm)</th><th>Fila (px)</th><th>Columna (px)</th><th>Desajuste (px)</th></tr>
     ${p.datos.puntos.map((q,i)=>`<tr><td>${i+1}</td><td>${fmt(q.h,1)}</td><td>${fmt(q.y,1)}</td>
+      <td>${q.x===null||q.x===undefined?"—":fmt(q.x,0)}</td>
       <td style="color:${Math.abs(p.datos.res[i]||0)>0.004*p.h?"var(--warn)":"var(--txt)"}">${fmt(p.datos.res[i],1)}</td></tr>`).join("")}
   </table>
   <div class="note">Si una medida sale rara, mira aquí: un desajuste grande en una sola marca suele ser una altura
@@ -1807,7 +1988,7 @@ function enlaza(){
   on("bCalibAqui","click",()=>{
     S.modo="calib"; S.calib.out=null;
     if(!S.calib.puntos.length) S.calib.puntos=[{h:null,y:null},{h:null,y:null},{h:null,y:null},{h:null,y:null},{h:null,y:null}];
-    S.calib.puntos.forEach(p=>p.y=null);
+    S.calib.puntos.forEach(p=>{p.y=null;p.x=null;});
     sincTabs(); pinta();});
   on("bTec","click",()=>{ S.tecnico=!S.tecnico;
     localStorage.setItem("vpd.tecnico", S.tecnico?"1":"0"); pinta(); });
@@ -1834,12 +2015,13 @@ function enlaza(){
   const vt=$("#vTime"); if(vt&&S.src&&S.src.kind==="vid") vt.textContent=fmt(v.currentTime,3)+" s";
 
   // calibración
-  num("cD","d",S.calib); num("cHc","hCam",S.calib); num("cSen","sensor",S.calib);
+  num("cD","d",S.calib); num("cHc","hCam",S.calib); num("cSen","sensor",S.calib); num("cSenR","sensorRoll",S.calib);
   $$(".cH").forEach(e=>e.addEventListener("change",ev=>{
     S.calib.puntos[+ev.target.dataset.i].h = ev.target.value===""?null:+ev.target.value; }));
   $$(".cFix").forEach(e=>e.addEventListener("click",ev=>{
     if(!dentro()) return;
-    S.calib.puntos[+ev.target.dataset.i].y = centroImg().y; pinta(); }));
+    { const c=centroImg(), q=S.calib.puntos[+ev.target.dataset.i];
+      q.y=c.y; q.x=c.x; } pinta(); }));
   on("bCamCal","click",()=>{ S.calib.uso="vivo"; S.camaraId? abreCamara(S.camaraId) : abreDirecto(); });
   on("bLoadVidCal","click",()=>$("#fVidCal").click());
   const vv=$("#vid"), pasoC=1/50;
@@ -1859,7 +2041,7 @@ function enlaza(){
     await cargaCapturas();}));
   on("kFull","click",()=>{S.calib.tipo="full";S.calib.out=null;pinta();});
   on("kPhi","click",()=>{S.calib.tipo="phi";S.calib.out=null;pinta();});
-  on("cAdd","click",()=>{S.calib.puntos.push({h:null,y:null});pinta();});
+  on("cAdd","click",()=>{S.calib.puntos.push({h:null,y:null,x:null});pinta();});
   on("cDel","click",()=>{S.calib.puntos.pop();pinta();});
   on("cRun","click",()=>{S.calib.out=ajusta();pinta();});
   on("cCam","change",e=>{S.calib.camaraId=e.target.value; pinta();});
@@ -1885,16 +2067,21 @@ function enlaza(){
       (S.calib.camaraId? nombreCamara(S.calib.camaraId) : "cámara")+" · "+USOS[S.calib.uso||"foto"]+" "+S.src.w+"×"+S.src.h);
     if(!name) return;
     const id="p"+Date.now();
-    S.perfiles.push({id,name,fRel:o.fRel,y0Rel:o.y0Rel,delta:o.delta,uF:0.40,
+    S.perfiles.push({id,name,fRel:o.fRel,y0Rel:o.y0Rel,delta:o.delta,
+      deltaRoll:(o.deltaRoll===null||o.deltaRoll===undefined)?0:+o.deltaRoll.toFixed(3), uF:0.40,
       w:S.src.w, h:S.src.h, camaraId:S.calib.camaraId||"", uso:S.calib.uso||"foto",
       /* Se guarda el expediente completo, no solo el resultado. Sin los datos
          de partida una calibración no se puede comprobar ni corregir, y ante
          un organismo notificado no se sostiene. */
       datos:{ fecha:new Date().toISOString(), d:+S.calib.d, hCam:+S.calib.hCam,
-              sensor:+S.calib.sensor, capId:S.calib.capId||"", tipo:S.calib.tipo,
+              sensor:+S.calib.sensor,
+              sensorRoll:vacio(S.calib.sensorRoll)?null:+S.calib.sensorRoll,
+              capId:S.calib.capId||"", tipo:S.calib.tipo,
               puntos:S.calib.puntos.filter(q=>q.y!==null&&isFinite(+q.h))
-                     .map(q=>({h:+q.h, y:+q.y})),
-              f:o.f, y0:o.y0, phi:o.phi, rms:o.rms, res:o.res.slice() },
+                     .map(q=>({h:+q.h, y:+q.y, x:(q.x===null||q.x===undefined)?null:+q.x})),
+              f:o.f, y0:o.y0, phi:o.phi, rms:o.rms, res:o.res.slice(),
+              rho:o.roll?o.roll.rho:null, rhoRms:o.roll?o.roll.rms:null,
+              deltaRoll:(o.deltaRoll===null||o.deltaRoll===undefined)?null:o.deltaRoll },
       note:"Ajuste de "+o.n+" puntos, rms "+fmt(o.rms,2)+" px, "+S.src.w+"×"+S.src.h+" px"});
     S.perfilId=id; guarda(); pinta();
     alert(S.calib.camaraId
@@ -1907,6 +2094,17 @@ function enlaza(){
     if(!confirm("¿Fijar δ = "+fmt(o.delta,3)+"° en el perfil «"+p.name+"»?\n\nValor actual: "+fmt(p.delta,3)+"°")) return;
     p.delta=+o.delta.toFixed(4);
     p.note=(p.note||"")+" · δ reajustada a "+fmt(o.delta,3)+"°";
+    guarda(); S.modo="ajustes"; sincTabs(); pinta();
+  });
+  on("cSaveDR","click",()=>{
+    const o=S.calib.out; if(!o||o.err||o.deltaRoll===null||o.deltaRoll===undefined) return;
+    const p=perfil();
+    if(!confirm("¿Fijar δρ = "+fmt(o.deltaRoll,3)+"° en el perfil «"+p.name+"»?\n\n"
+      +"Valor actual: "+fmt(+p.deltaRoll||0,3)+"°\n\n"
+      +"Es el cero lateral del inclinómetro. Compruébalo luego sobre la pared: "
+      +"la vertical dibujada debe cruzar todas las marcas.")) return;
+    p.deltaRoll=+(+o.deltaRoll).toFixed(3);
+    p.note=(p.note||"")+" · δρ fijada en "+fmt(o.deltaRoll,3)+"°";
     guarda(); S.modo="ajustes"; sincTabs(); pinta();
   });
 
@@ -1932,7 +2130,7 @@ function enlaza(){
     S.med={d:100, ud:1.0, hRef:0, tol:20, upx:3, uphi:0.3, phiManual:"", rollManual:"",
            obliq:false, angulos:"15, 30", horiz:false, alturas:"20, 30"};
     S.srcCamId=""; localStorage.removeItem("vpd.camId");
-    S.calib={puntos:[], d:100, hCam:0, sensor:0, out:null, tipo:"phi", camId:"", origen:"", capId:""};
+    S.calib={puntos:[], d:100, hCam:0, sensor:0, sensorRoll:"", out:null, tipo:"phi", camId:"", origen:"", capId:""};
     S.marks={origen:null, puntos:[{lab:"Altura de funcionamiento", x:null, y:null}]}; S.sel=-1;
     S.src=null; S.reticula=false;
     cerrarCamara(); $("#hint").classList.remove("hide");
@@ -1944,8 +2142,9 @@ function enlaza(){
     const p=perfil(); if(!p||!p.datos) return;
     const D=p.datos;
     S.calib.d=D.d; S.calib.hCam=D.hCam; S.calib.sensor=D.sensor;
+    S.calib.sensorRoll=(D.sensorRoll===null||D.sensorRoll===undefined)?"":D.sensorRoll;
     S.calib.camaraId=p.camaraId||""; S.calib.uso=p.uso||"foto"; S.calib.tipo=D.tipo||"full";
-    S.calib.puntos=D.puntos.map(q=>({h:q.h, y:q.y}));
+    S.calib.puntos=D.puntos.map(q=>({h:q.h, y:q.y, x:(q.x===null||q.x===undefined)?null:q.x}));
     S.calib.capId=D.capId||""; S.calib.origen=D.capId?"captura":"archivo";
     S.calib.out=null;
     S.modo="calib"; sincTabs();
@@ -1970,7 +2169,7 @@ function enlaza(){
     for(const q of lista){
       if(!q||!q.fRel||!q.y0Rel) continue;
       S.perfiles.push({id:"i"+Date.now()+"_"+(n++), name:(q.name||"perfil importado")+" (importado)",
-        fRel:+q.fRel, y0Rel:+q.y0Rel, delta:+(q.delta||0), uF:+(q.uF||0.40),
+        fRel:+q.fRel, y0Rel:+q.y0Rel, delta:+(q.delta||0), deltaRoll:+(q.deltaRoll||0), uF:+(q.uF||0.40),
         w:q.w||null, h:q.h||null, camaraId:"", uso:q.uso||"foto",   // el enlace a cámara no es portable
         note:(q.note||"")+" · importado "+new Date().toISOString().slice(0,10)});
     }
@@ -1996,7 +2195,7 @@ $("#fVidCal").addEventListener("change",e=>{
   if(!f) return;
   if(f.type && !f.type.startsWith("video/")){ alert("Ese archivo no es un vídeo ("+f.type+")."); return; }
   S.calib.uso="video"; S.calib.origen="archivo"; S.calib.camaraId=""; S.calib.capId="";
-  S.calib.puntos.forEach(p=>p.y=null); S.calib.out=null;
+  S.calib.puntos.forEach(p=>{p.y=null;p.x=null;}); S.calib.out=null;
   cargaVideo(f);
 });
 ["fVid","fVidDoc"].forEach(id=>$("#"+id).addEventListener("change",e=>{
