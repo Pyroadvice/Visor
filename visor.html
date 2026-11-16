@@ -183,8 +183,10 @@ const guardaCam = () => {
    es un dispositivo distinto sino el mismo con otro zoom, así que un perfil
    tiene que colgar de la configuración y no del dispositivo. */
 const camara = id => S.camaras.find(c=>c.id===id) || null;
+const esExterna = c => !!(c && c.tipo==="externa");
 const nombreCamara = id => { const c=camara(id); return c? c.nombre : "—"; };
-const perfilDeCamara = id => S.perfiles.find(q=>q.camaraId && q.camaraId===id && (q.uso||"foto")==="vivo") || null;
+const perfilDe = (id,uso) => S.perfiles.find(q=>q.camaraId && q.camaraId===id && (q.uso||"foto")===uso) || null;
+const perfilDeCamara = id => perfilDe(id,"vivo");
 
 const guarda = () => {
   localStorage.setItem("vpd.perfiles", JSON.stringify(S.perfiles));
@@ -758,7 +760,9 @@ async function cargaImagen(file){
   S.srcCamId="";                 // un archivo no viene de ninguna cámara de este aparato
   limpiaMarcas();
   if (S.modo==="calib"){ S.calib.puntos.forEach(p=>p.y=null); S.calib.out=null;
-    S.calib.origen="archivo"; S.calib.camaraId=""; S.calib.capId=""; S.calib.uso="foto"; }
+    S.calib.origen="archivo"; S.calib.capId=""; S.calib.uso="foto";
+    /* No se borra la cámara elegida: lo normal es calibrar varias fotos de la
+       misma cámara seguidas, y volver a elegirla cada vez sería un estorbo. */ }
   const sug=perfilPorExif();
   if(sug){ S.perfilId=sug.perfil.id; guarda(); }
   encaja(); $("#hint").classList.add("hide"); pinta();
@@ -1324,6 +1328,19 @@ function tecBoton(){
    objetivo es un HECHO y se afirma; solo cuando viene de un archivo, y la
    página no puede saberlo, se ofrece como elección. */
 function bloqueObjetivo(){
+  if (S.calib.uso!=="vivo"){
+    const u=S.calib.uso||"foto";
+    return `<h3>¿De qué cámara es ${u==="video"?"este vídeo":"esta foto"}?</h3>
+    <div class="row"><label>Cámara</label><select id="cCam">
+      <option value=""${S.calib.camaraId?"":" selected"}>— elige o crea una —</option>
+      ${S.camaras.map(c=>`<option value="${c.id}"${c.id===S.calib.camaraId?" selected":""}>${c.nombre}${
+        perfilDe(c.id,u)?"  ·  ya calibrada para "+USOS[u]:""}</option>`).join("")}
+    </select></div>
+    <div class="btns"><button id="cNuevaCam">Crear una cámara para esta ${u==="video"?"grabación":"foto"}</button></div>
+    <div class="note">El perfil quedará asociado a esa cámara y a este uso, de modo que cuando te manden otra
+    ${u==="video"?"grabación":"foto"} del mismo origen lo encuentres por su nombre.
+    ${S.exif&&(S.exif.marca||S.exif.modelo)?`El archivo dice que se tomó con <b>${[S.exif.marca,S.exif.modelo].filter(Boolean).join(" ")}</b>${S.exif.f35?`, equivalente ${fmt(S.exif.f35,0)} mm`:""}.`:""}</div>`;
+  }
   if (S.calib.origen==="captura" && S.calib.camaraId)
     return `<div class="card" style="padding:10px;border-color:var(--acc)">
       <div class="big"><s>Calibrando la cámara</s><b style="font-size:17px">${nombreCamara(S.calib.camaraId)}</b></div>
@@ -1343,9 +1360,7 @@ function estadoCalib(){
   const fij=pts.filter(p=>p.y!==null && isFinite(+p.h)).length;
   const alt=pts.filter(p=>isFinite(+p.h)).length;
   const min=S.calib.tipo==="phi"?2:3;
-  const perfil = S.calib.uso==="vivo" ? perfilDeCamara(S.calib.camaraId)
-    : (S.calib.out && !S.calib.out.err
-       ? S.perfiles.find(q=>(q.uso||"foto")===S.calib.uso && q.w===S.src.w && q.h===S.src.h) || null : null);
+  const perfil = perfilDe(S.calib.camaraId, S.calib.uso||"foto");
   const geom=!!(+S.calib.d) && S.calib.hCam!=="" && S.calib.hCam!==null;
   return {fij, alt, min, nTot:pts.length, geom, perfil,
           ajuste: !!(S.calib.out && !S.calib.out.err),
@@ -1360,23 +1375,30 @@ function uiCamaras(){
   /* --- cámaras ya definidas --- */
   if (S.camaras.length){
     h+=`<h3>Cámaras definidas</h3><table>
-      <tr><th>Nombre</th><th>Zoom</th><th>Calibrada</th><th></th></tr>
+      <tr><th>Nombre</th><th>Tipo</th><th>Calibrada para</th><th></th></tr>
       ${S.camaras.map(c=>{
-        const pf=perfilDeCamara(c.id);
+        const us=["vivo","foto","video"].filter(u=>perfilDe(c.id,u));
         return `<tr class="${S.camaraId===c.id?"sel":""}">
           <td><input type="text" class="cmNom" data-id="${c.id}" value="${(c.nombre||"").replace(/"/g,"&quot;")}"
               style="font:13px inherit"></td>
-          <td>${c.zoom?"×"+fmt(c.zoom,1):"—"}</td>
-          <td style="color:${pf?"var(--ok)":"var(--bad)"};font-size:11.5px">${pf?"sí":"no"}</td>
-          <td><button class="mini cmUsa" data-id="${c.id}">abrir</button>
+          <td style="font-size:11.5px">${esExterna(c)?"de otros":"este aparato"+(c.zoom?" ×"+fmt(c.zoom,1):"")}</td>
+          <td style="font-size:11.5px;color:${us.length?"var(--ok)":"var(--bad)"}">${
+            us.length? us.map(u=>USOS[u]).join(", ") : "nada"}</td>
+          <td>${esExterna(c)?"":`<button class="mini cmUsa" data-id="${c.id}">abrir</button>`}
               <button class="mini cmDel" data-id="${c.id}">×</button></td></tr>`;}).join("")}
     </table>
     <div class="note">Escribe el nombre que quieras en cada fila: «Principal ×1», «Principal ×2», «Gran angular»…
     «Abrir» la enciende para comprobarla o para capturarla en Calibración.</div>`;
   } else h+=`<div class="verdict v-na">Todavía no has definido ninguna cámara.</div>`;
 
-  /* --- añadir --- */
-  h+=`<h3>Añadir una cámara</h3>`;
+  /* --- externas --- */
+  h+=`<h3>Cámaras de otros</h3>
+  <div class="note">Para calibrar fotos o vídeos que te manden, hechos con una cámara que no es este aparato.
+  Aquí solo le pones nombre: la calibración sale del archivo que te envíen.</div>
+  <div class="btns"><button id="cmExt">Añadir cámara externa</button></div>`;
+
+  /* --- añadir de este aparato --- */
+  h+=`<h3>Añadir una cámara de este aparato</h3>`;
   if (!(S.src && S.src.kind==="live")){
     h+=`<div class="btns"><button class="p" id="cmAbrir">Encender la cámara</button></div>
     <div class="note">Se enciende, eliges objetivo y zoom mirando la imagen, y la guardas con un nombre.</div>`;
@@ -1437,8 +1459,11 @@ function uiCalib(){
   otra focal en vivo, en foto y en vídeo.</div>
   <div class="btns">
     <button class="${S.calib.uso==="vivo"?"p":""}" id="bCamCal">Cámara en vivo</button>
-    <button class="${S.calib.uso==="foto"?"p":""}" id="bLoadDoc">Una foto</button>
     <button class="${S.calib.uso==="video"?"p":""}" id="bLoadVidCal">Un vídeo</button>
+  </div>
+  <div class="btns">
+    <button class="${S.calib.uso==="foto"?"p":""}" id="bLoadImg">Foto · galería</button>
+    <button class="${S.calib.uso==="foto"?"p":""}" id="bLoadDoc">Foto · archivo</button>
   </div>
   <div class="note">Para <b>en vivo</b>, captura con la cámara de este aparato. Para <b>foto</b> o <b>vídeo</b>,
   carga un archivo tomado con la cámara de la que luego te vayan a mandar material: ese perfil quedará listo para
@@ -1505,6 +1530,7 @@ function uiCalib(){
     ${paso(E.geom,"Distancia y altura de lente introducidas")}
     ${paso(E.alt>=E.min,"Alturas de las marcas escritas ("+E.alt+" de "+E.nTot+")")}
     ${paso(E.fij>=E.min,"Marcas fijadas con la cruz ("+E.fij+" de "+E.nTot+", mínimo "+E.min+")")}
+    ${paso(!!S.calib.camaraId,"Cámara indicada"+(S.calib.camaraId?": "+nombreCamara(S.calib.camaraId):""))}
     ${paso(E.ajuste,"Cálculo hecho")}
     ${paso(!!E.perfil,"Perfil guardado"+(E.perfil?": "+E.perfil.name:""))}
     <div class="verdict ${E.perfil?"v-ok":(E.ajuste?"v-na":"v-no")}" style="text-align:left;font-weight:500">
@@ -1690,7 +1716,7 @@ function enlaza(){
   on("cmGuardar","click",()=>{
     const nom=($("#cmNombre").value||"").trim();
     if(!nom){ alert("Ponle un nombre que te diga qué es: «Principal ×1», «Gran angular»…"); return; }
-    const c={id:"cm"+Date.now(), nombre:nom, deviceId:S.srcCamId||"",
+    const c={id:"cm"+Date.now(), nombre:nom, tipo:"dispositivo", deviceId:S.srcCamId||"",
              zoom:S.zoomActual??null, w:S.src.w, h:S.src.h, ts:Date.now()};
     S.camaras.push(c); S.camaraId=c.id; guardaCam(); pinta();
     alert("Cámara «"+nom+"» guardada. Ahora captúrala y calíbrala en Calibración.");});
@@ -1769,11 +1795,26 @@ function enlaza(){
   on("cDel","click",()=>{S.calib.puntos.pop();pinta();});
   on("cRun","click",()=>{S.calib.out=ajusta();pinta();});
   on("cCam","change",e=>{S.calib.camaraId=e.target.value; pinta();});
+  on("cNuevaCam","click",()=>{
+    const sug = S.exif&&(S.exif.marca||S.exif.modelo)
+      ? [S.exif.marca,S.exif.modelo].filter(Boolean).join(" ") : "";
+    const n=prompt("Nombre de la cámara de la que viene este archivo:\n(por ejemplo, de quién es o qué aparato es)", sug);
+    if(n===null) return;
+    const nom=n.trim(); if(!nom) return;
+    const c={id:"cm"+Date.now(), nombre:nom, tipo:"externa", deviceId:"", zoom:null,
+             w:S.src?S.src.w:null, h:S.src?S.src.h:null, ts:Date.now()};
+    S.camaras.push(c); S.calib.camaraId=c.id; guardaCam(); pinta();});
+  on("cmExt","click",()=>{
+    const n=prompt("Nombre de la cámara externa:\n(por ejemplo «Nikon del cliente» o «móvil de taller»)","");
+    if(n===null) return;
+    const nom=n.trim(); if(!nom) return;
+    S.camaras.push({id:"cm"+Date.now(), nombre:nom, tipo:"externa", deviceId:"", zoom:null, ts:Date.now()});
+    guardaCam(); pinta();});
   on("cSave","click",()=>{
     const o=S.calib.out; if(!o||o.err) return;
-    const name=prompt("Nombre del perfil:", (S.calib.uso==="vivo"&&S.calib.camaraId
-      ? nombreCamara(S.calib.camaraId)+" en vivo"
-      : "cámara "+USOS[S.calib.uso||"foto"])+" "+S.src.w+"×"+S.src.h);
+    if(!S.calib.camaraId && !confirm("No has indicado de qué cámara es.\n\nEl perfil se guardará suelto y tendrás que buscarlo a mano cada vez.\n\n¿Guardar así?")) return;
+    const name=prompt("Nombre del perfil:",
+      (S.calib.camaraId? nombreCamara(S.calib.camaraId) : "cámara")+" · "+USOS[S.calib.uso||"foto"]+" "+S.src.w+"×"+S.src.h);
     if(!name) return;
     const id="p"+Date.now();
     S.perfiles.push({id,name,fRel:o.fRel,y0Rel:o.y0Rel,delta:o.delta,uF:0.40,
