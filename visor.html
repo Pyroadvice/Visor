@@ -962,6 +962,11 @@ async function aplicaZoom(track, z){
 }
 async function abreDirecto(devId, zoom){
   S.liveErr="";
+  /* Blindaje: solo una cadena es un deviceId. Cualquier otra cosa (un Event
+     de un manejador mal cableado) se descarta en vez de colarse como
+     restricción imposible. */
+  if (devId!==undefined && devId!==null && typeof devId!=="string") devId=undefined;
+  if (zoom!==undefined && zoom!==null && !isFinite(+zoom)) zoom=undefined;
   try{
     /* Sin forzar 3840 de ancho: esa petición hacía que Chrome abriera la
        cámara ultra gran angular en vez de la principal, con una focal un 65 %
@@ -1317,7 +1322,28 @@ function uiMedida(m){
       <div class="kv"><span>perfil que le corresponde</span><b style="color:${pA?"var(--ok)":"var(--bad)"}">${
         pA? pA.name+(zoomDe(pA)!==null?" · ×"+fmt(zoomDe(pA),2):"") : "ninguno"}</b></div>
       ${pA?"":`<div class="verdict v-no" style="text-align:left;font-weight:500">Este objetivo no está calibrado,
-        así que las alturas serían falsas. Ve a Calibración, captúralo y calíbralo.</div>`}</div>`;
+        así que las alturas serían falsas. Ve a Calibración, captúralo y calíbralo.</div>`}
+      <div class="kv"><span>fotograma abierto ahora</span><b>${S.src.w}×${S.src.h} px</b></div>
+      ${pA&&pA.w?`<div class="kv"><span>fotograma de la calibración</span><b style="color:${
+        (pA.w===S.src.w&&pA.h===S.src.h)?"var(--ok)":"var(--warn)"}">${pA.w}×${pA.h} px</b></div>`:""}
+      ${(()=>{ const cz=camara(S.camaraId);
+        if(!cz||cz.zoom===null||cz.zoom===undefined) return "";
+        const ok = S.zoomActual!==null && S.zoomActual!==undefined
+                   && Math.abs(S.zoomActual-cz.zoom)<=0.02*Math.abs(cz.zoom||1);
+        return `<div class="kv"><span>zoom guardado · aplicado</span><b style="color:${ok?"var(--ok)":"var(--bad)"}">${
+          fmt(cz.zoom,2)} · ${S.zoomActual===null||S.zoomActual===undefined?"no aplicado":fmt(S.zoomActual,2)}</b></div>`
+          + (ok?"":`<div class="verdict v-no" style="text-align:left;font-weight:500">
+            <b>El zoom guardado no se ha aplicado.</b> El campo de visión de ahora no es el de la calibración, así
+            que todas las alturas saldrán multiplicadas por un factor constante. Cierra la cámara y vuelve a
+            abrirla; si sigue sin aplicarse, vuelve a definir esta cámara en la pestaña Cámaras.</div>`);
+      })()}</div>
+      ${pA&&pA.w&&(pA.w!==S.src.w||pA.h!==S.src.h)?`<div class="verdict v-na" style="text-align:left;font-weight:500">
+        <b>La cámara no está abriendo con el mismo fotograma que al calibrar.</b>
+        Un tamaño distinto con la misma relación de aspecto no estropea nada por sí solo, porque la focal del perfil
+        es relativa a la altura del fotograma. Pero sí avisa de que el navegador ha negociado otra configuración de
+        la cámara, y si además cambia el recorte o el zoom, el campo de visión ya no es el mismo y todas las alturas
+        salen con un error de escala constante.
+        Compruébalo midiendo algo de altura conocida y mirando la casilla «altura real» de la tabla de marcas.</div>`:""}`;
   } else {
     const uso=usoDeModo(m), lista=perfilesDe(uso);
     if(!lista.length) return h + `<div class="verdict v-no" style="text-align:left;font-weight:500">
@@ -2143,7 +2169,14 @@ function enlaza(){
   on("bLoadVidDoc","click",()=>$("#fVidDoc").click());
   on("sOri","click",()=>{SENS.pref="ori"; SENS.buf=[]; pinta();});
   on("sGrav","click",()=>{SENS.pref="grav"; SENS.buf=[]; pinta();});
-  on("bLive","click",abreDirecto);
+  /* abreDirecto NO se cablea directo: como manejador recibiría el Event en el
+     primer parámetro, que es el deviceId. El Event es truthy, así que se pedía
+     {deviceId:{exact:<Event>}}, la petición fallaba, la cascada caía a
+     facingMode:environment y se abría la cámara por defecto SIN el zoom
+     guardado. Calibrar por «Cámara en vivo» (que sí pasa por abreCamara) y
+     medir por aquí daba entonces dos campos de visión distintos con la misma
+     cámara elegida: un error de escala constante en todas las alturas. */
+  on("bLive","click",()=>{ S.camaraId ? abreCamara(S.camaraId) : abreDirecto(); });
   on("bFreeze","click",congela);
   on("bFit","click",()=>{encaja();dibuja();pintaBadges();});
   on("bSens","click",activaSensores);
