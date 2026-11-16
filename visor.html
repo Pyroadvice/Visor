@@ -1263,11 +1263,18 @@ function uiCamaras(){
         <input type="number" step="0.1" id="cmZoom" value="${fmt(S.zoomActual??S.zoomCap.min,1)}"
           min="${S.zoomCap.min}" max="${S.zoomCap.max}"><span class="u">×</span></div>
         <div class="note">Este objetivo admite zoom de ×${fmt(S.zoomCap.min,1)} a ×${fmt(S.zoomCap.max,1)}.
-        Cada valor que uses para medir necesita su propia cámara aquí y su propia calibración.</div>`;
+        <b>Cada valor de zoom que uses para medir necesita su propia cámara aquí y su propia calibración</b>,
+        porque con otro zoom la cámara ve distinto.</div>`;
     else
-      h+=`<div class="note">Este objetivo no permite fijar el zoom desde el navegador, así que la cámara queda
-      definida solo por el objetivo. No uses el zoom de pellizco al medir: cambiaría lo que ve y la calibración
-      dejaría de valer.</div>`;
+      h+=`<div class="note">Este móvil <b>no deja al navegador controlar el zoom</b>, así que cada cámara que
+      definas aquí es uno de los objetivos físicos de la lista de arriba. No se puede crear un «×2» aparte: ese
+      zoom existe en la aplicación de cámara del teléfono, no para una página web.
+      <br><br>Tiene su lado bueno: al no haber zoom que tocar, una vez calibrado un objetivo <b>no hay forma de
+      descalibrarlo sin querer</b>. El zoom de pellizco del visor solo amplía la imagen en pantalla para colocar
+      la cruz y no cambia nada de lo que ve la cámara.
+      <br><br>Define uno por cada entrada de la lista. Si no sabes cuál es cuál, dales un nombre provisional,
+      calíbralos, y renómbralos después: <b>la calibración te dirá qué son</b>, porque el factor × sale de la
+      focal medida: ×1 el principal, ×0,6 aproximadamente el gran angular.</div>`;
     h+=`<div class="row"><label>Nombre</label><input type="text" id="cmNombre"
       placeholder="p. ej. Principal ×1" value=""></div>
     <div class="btns"><button class="g" id="cmGuardar">Guardar esta cámara</button>
