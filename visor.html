@@ -164,7 +164,7 @@ const S = {
   sel:-1,                 // -1 = origen ; 0..n-1 = índice de punto
   paso:"fino",            // fino | normal
   view:{s:1, tx:0, ty:0, fit:1},
-  calib:{ puntos:[], d:100, hCam:0, sensor:0, sensorRoll:"", out:null, tipo:"phi", camaraId:"", origen:"", capId:"", uso:"foto" },
+  calib:{ puntos:[], d:100, hCam:0, sensor:"", sensorRoll:"", out:null, tipo:"phi", camaraId:"", origen:"", capId:"", uso:"foto" },
   reticula:false,
   liveErr:"",
   cams:[], capturas:[], capErr:"", camDistinta:false,
@@ -373,6 +373,15 @@ const ROLL_OK = 1.0, ROLL_AVISO = 3.0;
    0,1 m/s² se traduce en 0,1/9,8 rad ≈ 0,6°. Si no hay ninguna lectura de
    balanceo (foto de un tercero sin dato), se presupuesta el límite de aviso. */
 const U_ROLL = 0.6, U_ROLL_DESC = ROLL_AVISO;
+/* δ y δρ son desalineaciones MECÁNICAS entre el acelerómetro y el sensor de
+   imagen: décimas de grado. Un valor grande no es una desalineación, es una
+   calibración mal hecha, casi siempre por una de estas dos causas: no se
+   anotó la lectura del inclinómetro de la toma, y el 0 por omisión se tomó
+   como lectura real; o se usó «solo desalineación» sobre un perfil cuya
+   óptica no corresponde al fotograma, y el ajuste metió la diferencia de
+   focal en el ángulo. Se avisa en vez de aplicarlo en silencio. */
+const DELTA_MAX = 3.0;
+const deltaRaro = p => !!p && Math.abs(+p.delta||0) > DELTA_MAX;
 function semaforoRoll(r){
   if (r===null) return {cls:"v-na", txt:"sin lectura"};
   const a=Math.abs(r);
@@ -664,7 +673,9 @@ function pintaBadges(){
   const t=tiltUsado();
   const fij = esVivo() ? "" : " ⏸";   // pausa = ángulo de la toma, no lectura viva
   const tb=$("#tiltbadge"), zb=$("#zoombadge"), rl=rollUsado();
-  tb.innerHTML = (t===null ? "φ —" : "φ "+(t>=0?"+":"")+fmt(t,2)+"°"+fij)
+  const dR = deltaRaro(perfil());
+  tb.innerHTML = (t===null ? "φ —"
+      : "<span style=\""+(dR?"color:var(--bad)":"")+"\">φ "+(t>=0?"+":"")+fmt(t,2)+"°"+fij+(dR?" ⚠":"")+"</span>")
     + "<br><span style=\"color:"
     + (rl===null?"var(--dim)":(Math.abs(rl)<=ROLL_OK?"var(--ok)":(Math.abs(rl)<=ROLL_AVISO?"var(--warn)":"var(--bad)")))
     + "\">ρ " + (rl===null?"—":(rl>=0?"+":"")+fmt(rl,2)+"°") + "</span>";
@@ -1099,7 +1110,7 @@ function ajusta(){
     const o = ajustaSoloPhi(pts0,d,hc,f,y0);
     const rl = ajustaRoll(pts0,f,y0,S.src.w/2,o.phi,S.src.w);
     return {tipo:"phi", f, y0, phi:o.phi, res:o.res, rms:rmsDe(o.res), n:pts0.length,
-            fRel:p.fRel, y0Rel:p.y0Rel, delta:o.phi-(+S.calib.sensor||0),
+            fRel:p.fRel, y0Rel:p.y0Rel, delta: vacio(S.calib.sensor) ? null : o.phi-(+S.calib.sensor),
             roll:rl, deltaRoll: (rl && !vacio(S.calib.sensorRoll)) ? rl.rho-(+S.calib.sensorRoll) : null};
   }
   const A=[], b=[];
@@ -1112,7 +1123,7 @@ function ajusta(){
   const res = residuos(pts0,f,y0,phi,d,hc), hImg=S.src.h;
   const rl = ajustaRoll(pts0,f,y0,S.src.w/2,phi,S.src.w);
   return {tipo:"full", f, y0, phi, rms:rmsDe(res), res, n:pts0.length,
-          fRel:f/hImg, y0Rel:y0/hImg, delta:phi-(+S.calib.sensor||0),
+          fRel:f/hImg, y0Rel:y0/hImg, delta: vacio(S.calib.sensor) ? null : phi-(+S.calib.sensor),
           roll:rl, deltaRoll: (rl && !vacio(S.calib.sensorRoll)) ? rl.rho-(+S.calib.sensorRoll) : null};
 }
 
@@ -1295,6 +1306,13 @@ function uiMedida(m){
       value="${S.med.rollManual??""}" placeholder="opcional"><span class="u">°</span></div>`;
     if (phiSupuesto()) h += `<div class="verdict v-na">Sin cabeceo: se supone cámara a plomo</div>`;
     else if (rl!==null && sem.cls!=="v-ok") h += `<div class="verdict ${sem.cls}">Balanceo ${fmt(Math.abs(rl),1)}°: se corrige, pero deja origen y punto en la misma vertical</div>`;
+    if (deltaRaro(perfil())) h += `<div class="verdict v-no" style="text-align:left;font-weight:500">
+      <b>El perfil activo lleva δ = ${(perfil().delta>=0?"+":"")+fmt(perfil().delta,2)}°.</b>
+      Eso no es una desalineación del sensor, que sería de décimas de grado: es una calibración mal cerrada, y la
+      aplicación está sumando ese ángulo a todas las lecturas de cabeceo. Por eso el móvil a plomo marca
+      ${fmt(perfil().delta,0)}° y la vertical de referencia no cruza marcas que sí están a plomo: la perspectiva se
+      calcula con un cabeceo que no es el real. Corrígelo en Ajustes y vuelve a calibrar anotando la lectura del
+      inclinómetro de la toma.</div>`;
   }
 
   if (T){
@@ -1693,7 +1711,7 @@ function uiCalib(){
   <h3>Geometría del ensayo</h3>
   <div class="row"><label>Distancia horiz.</label><input type="number" step="0.1" id="cD" value="${S.calib.d}"><span class="u">cm</span></div>
   <div class="row"><label>Altura de lente</label><input type="number" step="0.1" id="cHc" value="${S.calib.hCam}"><span class="u">cm</span></div>
-  <div class="row"><label>Lectura sensor · cabeceo</label><input type="number" step="0.01" id="cSen" value="${S.calib.sensor}"><span class="u">°</span></div>
+  <div class="row"><label>Lectura sensor · cabeceo</label><input type="number" step="0.01" id="cSen" value="${S.calib.sensor}" placeholder="obligatorio"><span class="u">°</span></div>
   <div class="row"><label>Lectura sensor · balanceo</label><input type="number" step="0.01" id="cSenR" value="${S.calib.sensorRoll}" placeholder="opcional"><span class="u">°</span></div>
   <div class="note">La altura de la lente sobre el suelo es imprescindible: sin ella la inclinación y la altura de cámara son indistinguibles y el ajuste no significa nada.
   El balanceo es opcional, pero si lo anotas se obtiene también el cero lateral del inclinómetro.</div>
@@ -1724,12 +1742,25 @@ function uiCalib(){
       <div class="kv"><span>centro óptico y₀</span><b>${fmt(o.y0,1)} px (${fmt(o.y0Rel,5)})</b></div>`
       : `<div class="kv"><span>óptica tomada del perfil</span><b>${fmt(o.fRel,5)} / ${fmt(o.y0Rel,5)}</b></div>`}
       <div class="kv"><span>inclinación real de la toma</span><b>${(o.phi>=0?"+":"")+fmt(o.phi,3)}°</b></div>
-      <div class="kv"><span>lo que marcaba el sensor</span><b>${(+S.calib.sensor>=0?"+":"")+fmt(+S.calib.sensor,2)}°</b></div>
-      <div class="big" style="margin-top:6px"><s>Desfase del sensor (δ)</s><b>${(o.delta>=0?"+":"")+fmt(o.delta,3)}°</b></div>
+      <div class="kv"><span>lo que marcaba el sensor</span><b>${vacio(S.calib.sensor)?"sin anotar":((+S.calib.sensor>=0?"+":"")+fmt(+S.calib.sensor,2)+"°")}</b></div>
+      <div class="big" style="margin-top:6px"><s>Desfase del sensor (δ)</s><b>${o.delta===null?"no determinado":((o.delta>=0?"+":"")+fmt(o.delta,3)+"°")}</b></div>
       <div class="kv"><span>error de ajuste</span><b>${fmt(o.rms,2)} px (${o.n} puntos)</b></div>
       <div class="verdict ${malo?"v-na":"v-ok"}">${malo
         ?"Ajuste pobre: revisa las alturas escritas, la distancia y que las marcas se vean nítidas"
         :"Ajuste correcto"}</div></div>
+      ${o.delta===null?`<div class="verdict v-na" style="text-align:left;font-weight:500">
+        <b>Falta la lectura del inclinómetro de esta toma.</b> Sin ella no hay δ: la inclinación resuelta por el
+        ajuste no tiene con qué compararse. Escríbela arriba y vuelve a pulsar Ajustar. Si la toma era de un archivo
+        y no anotaste el ángulo, el perfil se puede guardar igualmente con δ = 0, pero entonces habrá que medir δ
+        aparte antes de usarlo en vivo.</div>`
+       : Math.abs(o.delta)>DELTA_MAX?`<div class="verdict v-no" style="text-align:left;font-weight:500">
+        <b>δ = ${(o.delta>=0?"+":"")+fmt(o.delta,2)}° no es una desalineación creíble.</b>
+        El desfase entre el acelerómetro y el sensor de imagen es de décimas de grado; esto es ${fmt(Math.abs(o.delta),0)}°.
+        Las dos causas habituales: que la lectura del inclinómetro escrita arriba no sea la de esta toma
+        (el ajuste ha resuelto ${(o.phi>=0?"+":"")+fmt(o.phi,2)}° de inclinación real, así que comprueba si el móvil estaba
+        así de inclinado al disparar la foto), o que hayas usado «solo desalineación» sobre un perfil cuya óptica no
+        corresponde a este fotograma, caso en el que el ajuste mete la diferencia de focal dentro del ángulo.
+        Aplicarlo dejaría la aplicación midiendo con ${fmt(Math.abs(o.delta),0)}° de error de cabeceo.</div>`:""}
       ${o.roll ? `<h3>Balanceo medido sobre las marcas</h3><div class="res">
       <div class="kv"><span>inclinación observada de la línea de marcas</span><b>${(o.roll.total>=0?"+":"")+fmt(o.roll.total,3)}°</b></div>
       <div class="kv"><span>parte explicada por la perspectiva</span><b>${(o.roll.total-o.roll.rho>=0?"+":"")+fmt(o.roll.total-o.roll.rho,3)}°</b></div>
@@ -1751,10 +1782,11 @@ function uiCalib(){
       <div class="note">Desajuste de cada marca, en píxeles: ${o.res.map(v=>fmt(v,1)).join(" / ")}.
       Si crece hacia las marcas de arriba y de abajo, suele ser distorsión del objetivo o una focal mal resuelta.
       Si todas fallan por igual, suele ser un error en la altura de la lente.
-      δ equivale a un sesgo de ${fmt(100*Math.abs(o.delta)*Math.PI/180,2)} % de la distancia de observación si no se corrige.</div>
+      ${o.delta===null?"":"δ equivale a un sesgo de "+fmt(100*Math.abs(o.delta)*Math.PI/180,2)+" % de la distancia de observación si no se corrige."}</div>
       <div class="btns">
         ${o.tipo==="full"?'<button class="g" id="cSave">Guardar como perfil nuevo</button>'
-                         :'<button class="g" id="cSaveD">Aplicar δ al perfil activo</button>'}
+          :(o.delta===null?'<button disabled>Aplicar δ: falta la lectura del inclinómetro</button>'
+                          :'<button class="'+(Math.abs(o.delta)>DELTA_MAX?"":"g")+'" id="cSaveD">Aplicar δ al perfil activo</button>')}
         ${(o.tipo!=="full" && o.deltaRoll!==null && o.deltaRoll!==undefined)
           ?'<button id="cSaveDR">Aplicar δρ al perfil activo</button>':""}
       </div>`;
@@ -1831,7 +1863,7 @@ function uiAjustes(){
   <div class="res">
     <div class="kv"><span>f / altura de fotograma</span><b>${fmt(p.fRel,5)}</b></div>
     <div class="kv"><span>centro óptico relativo</span><b>${fmt(p.y0Rel,5)}</b></div>
-    <div class="kv"><span>desalineación δ · cabeceo</span><b>${(p.delta>=0?"+":"")+fmt(p.delta,3)}°</b></div>
+    <div class="kv"><span>desalineación δ · cabeceo</span><b${deltaRaro(p)?' style="color:var(--bad)"':''}>${(p.delta>=0?"+":"")+fmt(p.delta,3)}°${deltaRaro(p)?" ⚠":""}</b></div>
     <div class="kv"><span>desalineación δρ · balanceo</span><b>${((+p.deltaRoll||0)>=0?"+":"")+fmt(+p.deltaRoll||0,3)}°</b></div>
     <div class="kv"><span>factor de zoom del objetivo</span><b>${zoomDe(p)===null?"—":"×"+fmt(zoomDe(p),2)}</b></div>
     <div class="kv"><span>uso</span><b>${USOS[p.uso||"foto"]}</b></div>
@@ -1840,6 +1872,13 @@ function uiAjustes(){
     <div class="kv"><span>error de la focal</span><b>${fmt(p.uF,2)} %</b></div>
   </div>
   <div class="note">${p.note||""}</div>
+  ${deltaRaro(p)?`<div class="verdict v-no" style="text-align:left;font-weight:500">
+    <b>δ = ${(p.delta>=0?"+":"")+fmt(p.delta,2)}° es imposible como desalineación mecánica.</b> El acelerómetro y el
+    sensor de imagen difieren en décimas de grado. Con este valor, el móvil a plomo marca ${fmt(p.delta,0)}° de
+    cabeceo y todo lo que dependa del cabeceo sale mal: la altura, las oblicuas y la vertical de referencia.
+    Ponlo a cero para poder medir mientras recalibras, y al recalibrar anota la lectura del inclinómetro de la toma,
+    que ahora es obligatoria.</div>
+  <div class="btns"><button class="g" id="aDelta0">Poner δ a cero en este perfil</button></div>`:""}
   ${p.datos?`
   <h3>Datos de la calibración</h3>
   <div class="card">
@@ -2067,7 +2106,13 @@ function enlaza(){
       (S.calib.camaraId? nombreCamara(S.calib.camaraId) : "cámara")+" · "+USOS[S.calib.uso||"foto"]+" "+S.src.w+"×"+S.src.h);
     if(!name) return;
     const id="p"+Date.now();
-    S.perfiles.push({id,name,fRel:o.fRel,y0Rel:o.y0Rel,delta:o.delta,
+    if(o.delta===null && !confirm("No hay lectura del inclinómetro, así que el perfil se guardará con δ = 0.\n\n"
+      +"Servirá para medir sobre fotos en las que anotes el ángulo a mano, pero NO para medir en vivo hasta que "
+      +"midas δ.\n\n¿Guardar con δ = 0?")) return;
+    if(o.delta!==null && Math.abs(o.delta)>DELTA_MAX && !confirm("δ = "+fmt(o.delta,2)+"° no es creíble: la "
+      +"desalineación mecánica es de décimas de grado.\n\nSi lo guardas, la aplicación medirá con ese error de "
+      +"cabeceo.\n\n¿Guardar de todas formas?")) return;
+    S.perfiles.push({id,name,fRel:o.fRel,y0Rel:o.y0Rel,delta:o.delta===null?0:o.delta,
       deltaRoll:(o.deltaRoll===null||o.deltaRoll===undefined)?0:+o.deltaRoll.toFixed(3), uF:0.40,
       w:S.src.w, h:S.src.h, camaraId:S.calib.camaraId||"", uso:S.calib.uso||"foto",
       /* Se guarda el expediente completo, no solo el resultado. Sin los datos
@@ -2089,9 +2134,13 @@ function enlaza(){
       : "Perfil guardado SIN asociar a ninguna cámara: habrá que elegirlo a mano en Foto o Vídeo.");
   });
   on("cSaveD","click",()=>{
-    const o=S.calib.out; if(!o||o.err) return;
+    const o=S.calib.out; if(!o||o.err||o.delta===null) return;
     const p=perfil();
-    if(!confirm("¿Fijar δ = "+fmt(o.delta,3)+"° en el perfil «"+p.name+"»?\n\nValor actual: "+fmt(p.delta,3)+"°")) return;
+    const aviso = Math.abs(o.delta)>DELTA_MAX
+      ? "\n\nATENCIÓN: "+fmt(o.delta,2)+"° no es una desalineación mecánica creíble. Comprueba que la lectura "
+        +"del inclinómetro escrita sea la de esta toma, y que el perfil activo corresponda a este objetivo."
+      : "";
+    if(!confirm("¿Fijar δ = "+fmt(o.delta,3)+"° en el perfil «"+p.name+"»?\n\nValor actual: "+fmt(p.delta,3)+"°"+aviso)) return;
     p.delta=+o.delta.toFixed(4);
     p.note=(p.note||"")+" · δ reajustada a "+fmt(o.delta,3)+"°";
     guarda(); S.modo="ajustes"; sincTabs(); pinta();
@@ -2110,6 +2159,14 @@ function enlaza(){
 
   // ajustes
   on("aSel","change",e=>{S.perfilId=e.target.value;guarda();pinta();});
+  on("aDelta0","click",()=>{
+    const p=perfil(); if(!p) return;
+    if(!confirm("¿Poner δ = 0 en «"+p.name+"»?\n\nValor actual: "+fmt(p.delta,3)+"°\n\n"
+      +"Con δ = 0 el cabeceo que use la aplicación será el que marque el inclinómetro, sin corrección. "
+      +"Es lo correcto mientras no haya una δ bien medida.")) return;
+    p.note=(p.note||"")+" · δ puesta a 0 (valor anterior "+fmt(p.delta,3)+"°, no creíble)";
+    p.delta=0; guarda(); pinta();
+  });
   on("aDel","click",()=>{
     if(!confirm("¿Borrar el perfil «"+perfil().name+"»?\n\nNo se puede deshacer.")) return;
     S.perfiles=S.perfiles.filter(p=>p.id!==S.perfilId);
@@ -2130,7 +2187,7 @@ function enlaza(){
     S.med={d:100, ud:1.0, hRef:0, tol:20, upx:3, uphi:0.3, phiManual:"", rollManual:"",
            obliq:false, angulos:"15, 30", horiz:false, alturas:"20, 30"};
     S.srcCamId=""; localStorage.removeItem("vpd.camId");
-    S.calib={puntos:[], d:100, hCam:0, sensor:0, sensorRoll:"", out:null, tipo:"phi", camId:"", origen:"", capId:""};
+    S.calib={puntos:[], d:100, hCam:0, sensor:"", sensorRoll:"", out:null, tipo:"phi", camId:"", origen:"", capId:""};
     S.marks={origen:null, puntos:[{lab:"Altura de funcionamiento", x:null, y:null}]}; S.sel=-1;
     S.src=null; S.reticula=false;
     cerrarCamara(); $("#hint").classList.remove("hide");
