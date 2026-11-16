@@ -1714,18 +1714,20 @@ function uiCalib(){
   <div class="row"><label>Distancia horiz.</label><input type="number" step="0.1" id="cD" value="${S.calib.d}"><span class="u">cm</span></div>
   <div class="row"><label>Altura de lente</label><input type="number" step="0.1" id="cHc" value="${S.calib.hCam}"><span class="u">cm</span></div>
   <div class="row"><label>Lectura sensor · frontal</label><input type="text" inputmode="decimal" id="cSen"
-    value="${S.calib.sensor}" placeholder="${S.calib.origen==="archivo"?"si conoces el ángulo":"obligatorio"}">
+    value="${S.calib.sensor}" placeholder="${S.calib.origen==="archivo"?"recomendable":"obligatorio"}">
     <button class="mini sg" data-f="cSen">±</button><span class="u">°</span></div>
   <div class="row"><label>Lectura sensor · lateral</label><input type="text" inputmode="decimal" id="cSenR"
     value="${S.calib.sensorRoll}" placeholder="opcional">
     <button class="mini sg" data-f="cSenR">±</button><span class="u">°</span></div>
   <div class="note">La altura de la lente sobre el suelo es imprescindible: sin ella la inclinación y la altura de cámara son indistinguibles y el ajuste no significa nada.
   ${S.calib.origen==="archivo"
-    ? `<br><br><b>Esta imagen viene de un archivo, así que las lecturas no son exigibles.</b> Una foto no guarda el
-       ángulo al que estaba el aparato, y una lectura tomada antes o después de disparar no es la de la toma: con la
-       cámara en la mano, un grado de diferencia es un movimiento que no se nota. Déjalas vacías y el perfil se
-       guarda con δ = 0, que es lo honesto: conserva la óptica, que es lo que cuesta medir, y el ángulo de cada
-       medida se escribe al medir. Rellénalas solo si sabes el ángulo exacto de ESTA toma.`
+    ? `<br><br><b>Esta imagen viene de un archivo: la lectura frontal es recomendable, no obligatoria.</b>
+       Si la tienes, se obtiene δ y el perfil queda completo. Una foto no guarda el ángulo del aparato, así que solo
+       la tienes de verdad cuando la toma se hizo con el móvil fijo y pudiste leerla en ese momento: sobre trípode,
+       o con el aparato apoyado. <b>Si no la tienes, déjala vacía</b>, y no pongas una lectura de antes o después de
+       disparar: con la cámara en la mano, un grado es un movimiento que no se nota, y una lectura equivocada
+       produce una δ falsa que estropea todas las medidas. Sin ella el perfil se guarda con δ = 0 y el ángulo de
+       cada medida se escribe al medir, que para fotos es lo normal.`
     : `La inclinación lateral es opcional, pero si la anotas se obtiene también el cero lateral del inclinómetro.`}
   <br><br>El botón <b>±</b> cambia el signo, porque el teclado numérico del móvil no trae tecla de menos.</div>
 
@@ -1813,8 +1815,10 @@ function uiCalib(){
         </div>
       <div class="btns"><button id="cQuita" data-i="${o.sosp.idx.map(i=>S.calib.puntos.indexOf(o.pts[i])).join(",")}">Quitar
         ${o.sosp.idx.length>1?"esas marcas":"la marca "+(o.sosp.i+1)} y reajustar</button></div>`:""}
-      ${(o.delta===null && S.calib.origen==="archivo")?`<div class="note">Sin lectura del inclinómetro no hay δ, y
-        con una imagen de archivo es lo normal: se guardará con δ = 0 y el ángulo de cada medida se escribe al medir.</div>`
+      ${(o.delta===null && S.calib.origen==="archivo")?`<div class="verdict v-na" style="text-align:left;font-weight:500">
+        <b>Sin δ.</b> No hay lectura del inclinómetro, así que el perfil se guardará con δ = 0: válido para medir
+        sobre imágenes escribiendo el ángulo de cada toma, pero no para medir en vivo con esta cámara.
+        Si conocías el ángulo de esta toma, escríbelo arriba y vuelve a ajustar; si no, sigue adelante.</div>`
        : o.delta===null?`<div class="verdict v-na" style="text-align:left;font-weight:500">
         <b>Falta la lectura del inclinómetro de esta toma.</b> Sin ella no hay δ: la inclinación resuelta por el
         ajuste no tiene con qué compararse. Escríbela arriba y vuelve a pulsar Ajustar.</div>`

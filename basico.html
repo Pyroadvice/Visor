@@ -814,15 +814,15 @@ function uiCalibB(){
     </select></div>`}
     <div class="row"><label>Distancia</label><input type="number" step="0.1" id="cD" value="${C.d}"><span class="u">cm</span></div>
     <div class="row"><label>Altura lente</label><input type="number" step="0.1" id="cH" value="${C.hCam}"><span class="u">cm</span></div>
-    ${aj?"":`<div class="row"><label>Sensor frontal</label><input type="text" inputmode="decimal" id="cS"
-      value="${C.sensor}" placeholder="obligatorio">
+    <div class="row"><label>Sensor frontal</label><input type="text" inputmode="decimal" id="cS"
+      value="${C.sensor}" placeholder="${aj?"recomendable":"obligatorio"}">
       <button class="mini sg" data-f="cS">±</button><span class="u">°</span></div>
     <div class="row"><label>Sensor lateral</label><input type="text" inputmode="decimal" id="cSR"
       value="${C.sensorRoll}" placeholder="opcional">
-      <button class="mini sg" data-f="cSR">±</button><span class="u">°</span></div>`}
+      <button class="mini sg" data-f="cSR">±</button><span class="u">°</span></div>
     <div class="nota">La altura de la lente sobre el suelo es imprescindible: sin ella la inclinación y la altura de
-    cámara son indistinguibles.${aj?" De una cámara ajena no hay lecturas de inclinómetro, así que δ no se mide: el perfil guarda la óptica, que es lo que importa, y el ángulo de la toma se escribe al medir."
-      :" La lectura frontal es obligatoria para obtener δ."}</div>
+    cámara son indistinguibles.${aj?" La lectura frontal es recomendable, no obligatoria: si la tienes se obtiene δ y el perfil queda completo. Solo la tienes de verdad si la toma se hizo con el aparato fijo y pudiste leerla entonces. Si no, déjala vacía: una lectura de antes o después de disparar produce una δ falsa. Sin ella el perfil se guarda con δ = 0 y el ángulo se escribe al medir."
+      :" La lectura frontal es obligatoria para obtener δ."} El botón ± cambia el signo.</div>
     <h2>Marcas</h2>
     ${(()=>{ const E=escalas(C.puntos); const esc=new Map(); let raro=false;
       if(E&&E.med) E.tramos.forEach(t=>{ const d=t.s===null?null:Math.abs(t.s/E.med-1);
@@ -862,7 +862,8 @@ function uiCalibB(){
         fmt(o.sosp.base,2)} a ${fmt(o.sosp.rms,2)} px</div>
         <div class="bt"><button class="mini" id="cQui" data-i="${
           o.sosp.idx.map(i=>C.puntos.indexOf(o.pts[i])).join(",")}">Quitar y reajustar</button></div>`:""}
-      ${(o.delta===null&&!aj)?`<div class="ver v-no">Falta la lectura del sensor frontal: sin ella no hay δ.</div>`:""}
+      ${o.delta===null?`<div class="ver v-na">Sin δ: el perfil servirá para medir sobre imágenes escribiendo el
+        ángulo de cada toma, pero no en vivo con esta cámara.${aj?" Si conocías el ángulo de esta toma, escríbelo arriba y vuelve a ajustar.":""}</div>`:""}
       ${(o.delta!==null&&Math.abs(o.delta)>DELTA_MAX)?`<div class="ver v-no">δ = ${fmt(o.delta,2)}° no es creíble:
         la desalineación mecánica es de décimas de grado. Comprueba que la lectura sea la de esta toma.</div>`:""}
       <div class="bt"><button class="g" id="cGua">${
