@@ -95,7 +95,7 @@ a{color:var(--acc)}
     <a class="tab" href="index.html" style="text-decoration:none;display:flex;align-items:center">⌂</a>
     <button class="tab on" data-m="foto">Foto</button>
     <button class="tab" data-m="video">Vídeo</button>
-    <button class="tab" data-m="directo">Directo</button>
+    <button class="tab" data-m="directo">En vivo</button>
     <button class="tab" data-m="camaras">Cámaras</button>
     <button class="tab" data-m="calib">Calibración</button>
     <button class="tab" data-m="ajustes">Ajustes</button>
@@ -115,6 +115,7 @@ a{color:var(--acc)}
 <input type="file" id="fDoc">
 <input type="file" id="fVid" accept="video/*">
 <input type="file" id="fVidDoc">
+<input type="file" id="fVidCal">
 <video id="vid" playsinline muted style="display:none"></video>
 <datalist id="dlEtiq">
   <option>Altura de funcionamiento</option>
@@ -146,7 +147,7 @@ const PERFIL_BASE = {
   y0Rel:0.49750,    // centro óptico / altura de fotograma
   delta:0.511,      // desalineación acelerómetro → eje óptico (grados)
   uF:0.40,          // u(f) relativa, %
-  w:3000, h:4000,   // fotograma sobre el que se calibró
+  w:3000, h:4000, uso:"foto",   // fotograma y uso para el que se calibró
   note:"Validado 15/11/2026 sobre 3000×4000 px"
 };
 
@@ -163,7 +164,7 @@ const S = {
   sel:-1,                 // -1 = origen ; 0..n-1 = índice de punto
   paso:"fino",            // fino | normal
   view:{s:1, tx:0, ty:0, fit:1},
-  calib:{ puntos:[], d:100, hCam:0, sensor:0, out:null, tipo:"phi", camaraId:"", origen:"", capId:"" },
+  calib:{ puntos:[], d:100, hCam:0, sensor:0, out:null, tipo:"phi", camaraId:"", origen:"", capId:"", uso:"foto" },
   reticula:false,
   liveErr:"",
   cams:[], capturas:[], capErr:"", camDistinta:false,
@@ -183,7 +184,7 @@ const guardaCam = () => {
    tiene que colgar de la configuración y no del dispositivo. */
 const camara = id => S.camaras.find(c=>c.id===id) || null;
 const nombreCamara = id => { const c=camara(id); return c? c.nombre : "—"; };
-const perfilDeCamara = id => S.perfiles.find(q=>q.camaraId && q.camaraId===id) || null;
+const perfilDeCamara = id => S.perfiles.find(q=>q.camaraId && q.camaraId===id && (q.uso||"foto")==="vivo") || null;
 
 const guarda = () => {
   localStorage.setItem("vpd.perfiles", JSON.stringify(S.perfiles));
@@ -194,7 +195,14 @@ const guarda = () => {
    aplicación siguiera calculando, y eso es justo lo peligroso: un perfil que
    no corresponde a la cámara produce un error de escala constante que no
    avisa de su presencia. Sin perfil, la aplicación se niega a dar alturas. */
-const perfil = () => S.perfiles.find(p=>p.id===S.perfilId) || S.perfiles[0] || null;
+/* Cada perfil vale para UN uso. El mismo aparato da focales distintas en
+   vivo, en foto y en vídeo, porque cada modo recorta y escala el sensor de
+   otra manera, y una cámara ajena necesita las suyas. Mezclarlos produce un
+   error de escala constante que no avisa. */
+const USOS={vivo:"en vivo", foto:"foto", video:"vídeo"};
+const usoDeModo = m => m==="directo" ? "vivo" : (m==="video" ? "video" : "foto");
+const perfilesDe = u => S.perfiles.filter(q=>(q.uso||"foto")===u);
+const perfil = () => S.perfiles.find(p=>p.id===S.perfilId) || null;
 /* Factor de zoom del objetivo, deducido de la focal calibrada. Ninguna API lo
    facilita, pero f dividida por la diagonal del fotograma es invariante frente
    al recorte y comparable entre fuentes de distinta relación de aspecto.
@@ -750,7 +758,7 @@ async function cargaImagen(file){
   S.srcCamId="";                 // un archivo no viene de ninguna cámara de este aparato
   limpiaMarcas();
   if (S.modo==="calib"){ S.calib.puntos.forEach(p=>p.y=null); S.calib.out=null;
-    S.calib.origen="archivo"; S.calib.camaraId=""; S.calib.capId=""; }
+    S.calib.origen="archivo"; S.calib.camaraId=""; S.calib.capId=""; S.calib.uso="foto"; }
   const sug=perfilPorExif();
   if(sug){ S.perfilId=sug.perfil.id; guarda(); }
   encaja(); $("#hint").classList.add("hide"); pinta();
@@ -798,6 +806,7 @@ async function cargaCapturas(){
 }
 async function capturaCalib(){
   if(!S.src||S.src.kind!=="live") return;
+  S.calib.uso="vivo";
   const c=document.createElement("canvas");
   c.width=S.src.w; c.height=S.src.h;
   c.getContext("2d").drawImage(S.src.el,0,0);
@@ -817,7 +826,7 @@ async function usaCaptura(id){
   /* Sin perfil para este objetivo, lo que hace falta es el ajuste óptico
      completo: «solo desalineación» no permite crear un perfil nuevo. */
   if(!perfilDeCamara(c.camaraId)) S.calib.tipo="full";
-  S.calib.origen="captura"; S.calib.capId=c.id;
+  S.calib.origen="captura"; S.calib.capId=c.id; S.calib.uso="vivo";
   limpiaMarcas(); S.calib.puntos.forEach(p=>p.y=null); S.calib.out=null;
   encaja(); $("#hint").classList.add("hide"); pinta();
 }
@@ -1072,15 +1081,15 @@ function uiMedida(m){
           ${S.camaras.map(c=>`<option value="${c.id}"${c.id===S.camaraId?" selected":""}>${c.nombre}${
             perfilDeCamara(c.id)?"":"  ·  sin calibrar"}</option>`).join("")}
         </select></div>
-        <div class="note">Son las cámaras que definiste en la pestaña Cámaras. Al elegir una, se aplica su
-        objetivo y su zoom, y se activa su perfil de calibración.</div>`
+        <div class="note">Son las cámaras que definiste en la pestaña Cámaras. Al elegir una se aplica su
+        objetivo y su zoom, y se activa <b>su perfil de en vivo</b>. Un perfil de foto o de vídeo no vale aquí,
+        porque el flujo en vivo recorta y escala el sensor de otra manera.</div>`
       : `<div class="verdict v-na" style="text-align:left;font-weight:500">No has definido ninguna cámara.
          Ve a la pestaña <b>Cámaras</b>, enciende la cámara, elige objetivo y zoom y guárdala con un nombre.</div>`;
   }
   if (!S.perfiles.length) return h + `<div class="verdict v-no" style="text-align:left;font-weight:500">
     <b>No hay ningún perfil de cámara.</b><br>Sin él no se puede convertir lo que se ve en alturas, así que la
-    aplicación no va a dar ninguna cifra. Ve a <b>Calibración</b> y calibra el objetivo que vayas a usar.</div>`
-    + tecBoton();
+    aplicación no va a dar ninguna cifra. Ve a <b>Calibración</b>.</div>` + tecBoton();
   if (!S.src) return h + `<div class="note">Perfil activo: <b>${perfil().name}</b>.</div>` + tecBoton();
 
   const des = desajustePerfil();
@@ -1097,7 +1106,7 @@ function uiMedida(m){
   const rl = rollUsado(), sem = semaforoRoll(rl), tt = tiltUsado();
   h += `<h3>Toma</h3>`;
   if (esVivo()){
-    /* En Directo solo se elige el OBJETIVO, arriba. El perfil no es una
+    /* En vivo solo se elige el OBJETIVO, arriba. El perfil no es una
        elección: es el que se calibró para ese objetivo, o no hay ninguno.
        Dos selectores aparentemente alternativos para una sola decisión
        confunden más de lo que ayudan. */
@@ -1112,8 +1121,14 @@ function uiMedida(m){
       ${pA?"":`<div class="verdict v-no" style="text-align:left;font-weight:500">Este objetivo no está calibrado,
         así que las alturas serían falsas. Ve a Calibración, captúralo y calíbralo.</div>`}</div>`;
   } else {
-    h += `<div class="row"><label>Perfil de cámara</label><select id="iPerf">
-      ${S.perfiles.map(q=>`<option value="${q.id}"${q.id===S.perfilId?" selected":""}>${q.name}${
+    const uso=usoDeModo(m), lista=perfilesDe(uso);
+    if(!lista.length) return h + `<div class="verdict v-no" style="text-align:left;font-weight:500">
+      <b>No hay ningún perfil de ${USOS[uso]}.</b><br>Un perfil de otro uso no sirve aquí: el mismo aparato da
+      otra focal en vivo, en foto y en vídeo. Ve a <b>Calibración</b> y calibra ${uso==="video"
+      ? "a partir de un vídeo grabado con esa cámara" : "una foto tomada con esa cámara"}.</div>` + tecBoton();
+    if(!lista.some(q=>q.id===S.perfilId)){ S.perfilId=lista[0].id; guarda(); }
+    h += `<div class="row"><label>Perfil de ${USOS[uso]}</label><select id="iPerf">
+      ${lista.map(q=>`<option value="${q.id}"${q.id===S.perfilId?" selected":""}>${q.name}${
         zoomDe(q)!==null?"  ·  ×"+fmt(zoomDe(q),2):""}</option>`).join("")}
     </select></div>
     <div class="note">${des
@@ -1328,7 +1343,9 @@ function estadoCalib(){
   const fij=pts.filter(p=>p.y!==null && isFinite(+p.h)).length;
   const alt=pts.filter(p=>isFinite(+p.h)).length;
   const min=S.calib.tipo==="phi"?2:3;
-  const perfil=perfilDeCamara(S.calib.camaraId);
+  const perfil = S.calib.uso==="vivo" ? perfilDeCamara(S.calib.camaraId)
+    : (S.calib.out && !S.calib.out.err
+       ? S.perfiles.find(q=>(q.uso||"foto")===S.calib.uso && q.w===S.src.w && q.h===S.src.h) || null : null);
   const geom=!!(+S.calib.d) && S.calib.hCam!=="" && S.calib.hCam!==null;
   return {fij, alt, min, nTot:pts.length, geom, perfil,
           ajuste: !!(S.calib.out && !S.calib.out.err),
@@ -1338,7 +1355,7 @@ function uiCamaras(){
   let h=`<div class="note">Aquí defines las cámaras con las que vas a medir. Una cámara es una
   <b>configuración con nombre</b>: el objetivo más el zoom. Eso importa porque el ×2 del objetivo principal
   no es otra cámara para el navegador, sino la misma con otro zoom, y sin embargo <b>ve distinto y necesita su
-  propia calibración</b>. Cada cámara que definas aquí se calibra una vez y queda lista para usar en Directo.</div>`;
+  propia calibración</b>. Cada cámara que definas aquí se calibra una vez y queda lista para usar en vivo.</div>`;
 
   /* --- cámaras ya definidas --- */
   if (S.camaras.length){
@@ -1416,9 +1433,16 @@ function uiCalib(){
   <div class="note">${esPhi
     ? "Corrige el pequeño desfase entre el sensor de inclinación del móvil y hacia dónde mira realmente la lente. <b>Solo sirve si el objetivo ya está calibrado</b>, y no crea perfiles nuevos. Para fiarte del resultado, repítelo en dos o tres fotos tomadas con inclinaciones distintas y comprueba que sale casi lo mismo."
     : "<b>Esta es la calibración normal.</b> Mide cómo ve esta cámara, que es lo que hace falta para que las alturas salgan bien. Se hace una vez por cada objetivo y cada modo de captura.<br><br>Conviene repetirla sobre una segunda toma y comprobar que sale lo mismo: con todas las marcas en una sola vertical, un resultado puede parecer bueno sin serlo."}</div>
-  <div class="btns"><button class="p" id="bCamCal">Cámara</button>
-    <button id="bLoadImg">Galería</button>
-    <button id="bLoadDoc">Archivo</button></div>`;
+  <div class="note"><b>¿Qué vas a calibrar?</b> Cada uso necesita su propio perfil, porque el mismo aparato da
+  otra focal en vivo, en foto y en vídeo.</div>
+  <div class="btns">
+    <button class="${S.calib.uso==="vivo"?"p":""}" id="bCamCal">Cámara en vivo</button>
+    <button class="${S.calib.uso==="foto"?"p":""}" id="bLoadDoc">Una foto</button>
+    <button class="${S.calib.uso==="video"?"p":""}" id="bLoadVidCal">Un vídeo</button>
+  </div>
+  <div class="note">Para <b>en vivo</b>, captura con la cámara de este aparato. Para <b>foto</b> o <b>vídeo</b>,
+  carga un archivo tomado con la cámara de la que luego te vayan a mandar material: ese perfil quedará listo para
+  cuando llegue.</div>`;
 
   /* --- captura con la cámara --- */
   const vivo = S.src && S.src.kind==="live";
@@ -1461,6 +1485,13 @@ function uiCalib(){
   }
 
   if (!S.src || vivo) return h;
+  if (S.src.kind==="vid")
+    h += `<div class="btns">
+      <button id="vcBack10">⏪ 10</button><button id="vcBack">◀</button>
+      <button id="vcFwd">▶</button><button id="vcFwd10">10 ⏩</button></div>
+    <div class="note">Avanza hasta el fotograma donde se vean bien las marcas y calibra sobre él.
+    Fotograma <b id="vcTime">—</b> · ${S.src.w}×${S.src.h} px. El perfil valdrá para vídeos de esa misma cámara
+    y esa misma resolución.</div>`;
   const rlc = rollUsado();
   if (rlc!==null && Math.abs(rlc)>ROLL_OK)
     h += `<div class="err">Balanceo lateral ρ = ${fmt(rlc,2)}° en la lectura actual.
@@ -1470,14 +1501,14 @@ function uiCalib(){
   const paso=(ok,txt)=>`<div class="kv"><span style="text-align:left">${ok?"✓":"○"} ${txt}</span><b></b></div>`;
   h += `<h3>Estado de la calibración</h3>
   <div class="card">
-    ${paso(true,"Imagen cargada · "+S.src.w+"×"+S.src.h+" px")}
+    ${paso(true,"Calibrando para <b>"+USOS[S.calib.uso||"foto"]+"</b> · "+S.src.w+"×"+S.src.h+" px")}
     ${paso(E.geom,"Distancia y altura de lente introducidas")}
     ${paso(E.alt>=E.min,"Alturas de las marcas escritas ("+E.alt+" de "+E.nTot+")")}
     ${paso(E.fij>=E.min,"Marcas fijadas con la cruz ("+E.fij+" de "+E.nTot+", mínimo "+E.min+")")}
     ${paso(E.ajuste,"Cálculo hecho")}
-    ${paso(!!E.perfil,"Perfil guardado para este objetivo"+(E.perfil?": "+E.perfil.name:""))}
+    ${paso(!!E.perfil,"Perfil guardado"+(E.perfil?": "+E.perfil.name:""))}
     <div class="verdict ${E.perfil?"v-ok":(E.ajuste?"v-na":"v-no")}" style="text-align:left;font-weight:500">
-      ${E.perfil ? "Objetivo calibrado. Al seleccionarlo en Directo, este perfil se activa solo."
+      ${E.perfil ? "Objetivo calibrado. Al seleccionarlo en vivo, este perfil se activa solo."
        : E.ajuste ? "Falta el último paso: pulsa <b>Guardar como perfil nuevo</b>, abajo del resultado del ajuste."
        : !E.geom ? "Siguiente: escribe la distancia horizontal y la altura de la lente."
        : E.alt<E.min ? "Siguiente: escribe la altura real de cada marca en la tabla de puntos."
@@ -1549,13 +1580,14 @@ function uiAjustes(){
       border-radius:6px;padding:8px;font:11.5px ui-monospace,monospace"></textarea>`;
   return `<h3>Perfil activo</h3>
   <div class="row"><label>Perfil</label><select id="aSel">
-    ${S.perfiles.map(q=>`<option value="${q.id}"${q.id===S.perfilId?" selected":""}>${q.name}</option>`).join("")}
+    ${S.perfiles.map(q=>`<option value="${q.id}"${q.id===S.perfilId?" selected":""}>[${USOS[q.uso||"foto"]}] ${q.name}</option>`).join("")}
   </select></div>
   <div class="res">
     <div class="kv"><span>f / altura de fotograma</span><b>${fmt(p.fRel,5)}</b></div>
     <div class="kv"><span>centro óptico relativo</span><b>${fmt(p.y0Rel,5)}</b></div>
     <div class="kv"><span>desalineación δ</span><b>${(p.delta>=0?"+":"")+fmt(p.delta,3)}°</b></div>
     <div class="kv"><span>factor de zoom del objetivo</span><b>${zoomDe(p)===null?"—":"×"+fmt(zoomDe(p),2)}</b></div>
+    <div class="kv"><span>uso</span><b>${USOS[p.uso||"foto"]}</b></div>
     <div class="kv"><span>cámara asociada</span><b>${p.camaraId?nombreCamara(p.camaraId):"ninguna"}</b></div>
     <div class="kv"><span>calibrado sobre</span><b>${p.w&&p.h?p.w+"×"+p.h+" px (relación "+fmt(p.w/p.h,3)+")":"sin registrar"}</b></div>
     <div class="kv"><span>error de la focal</span><b>${fmt(p.uF,2)} %</b></div>
@@ -1714,7 +1746,13 @@ function enlaza(){
   $$(".cFix").forEach(e=>e.addEventListener("click",ev=>{
     if(!dentro()) return;
     S.calib.puntos[+ev.target.dataset.i].y = centroImg().y; pinta(); }));
-  on("bCamCal","click",()=>{ S.camaraId? abreCamara(S.camaraId) : abreDirecto(); });
+  on("bCamCal","click",()=>{ S.calib.uso="vivo"; S.camaraId? abreCamara(S.camaraId) : abreDirecto(); });
+  on("bLoadVidCal","click",()=>$("#fVidCal").click());
+  const vv=$("#vid"), pasoC=1/50;
+  const saltaC=dt=>{ if(S.src&&S.src.kind==="vid") vv.currentTime=Math.max(0,Math.min(vv.duration||0,vv.currentTime+dt)); };
+  on("vcBack","click",()=>saltaC(-pasoC)); on("vcFwd","click",()=>saltaC(pasoC));
+  on("vcBack10","click",()=>saltaC(-10*pasoC)); on("vcFwd10","click",()=>saltaC(10*pasoC));
+  const vct=$("#vcTime"); if(vct&&S.src&&S.src.kind==="vid") vct.textContent=fmt(vv.currentTime,3)+" s";
   on("bCapCal","click",capturaCalib);
   on("bCerrarCam","click",()=>{ cerrarCamara(); S.src=null;
     $("#hint").classList.remove("hide"); pinta(); });
@@ -1733,15 +1771,17 @@ function enlaza(){
   on("cCam","change",e=>{S.calib.camaraId=e.target.value; pinta();});
   on("cSave","click",()=>{
     const o=S.calib.out; if(!o||o.err) return;
-    const name=prompt("Nombre del perfil (incluye modo de captura y zoom):","perfil "+S.src.w+"×"+S.src.h);
+    const name=prompt("Nombre del perfil:", (S.calib.uso==="vivo"&&S.calib.camaraId
+      ? nombreCamara(S.calib.camaraId)+" en vivo"
+      : "cámara "+USOS[S.calib.uso||"foto"])+" "+S.src.w+"×"+S.src.h);
     if(!name) return;
     const id="p"+Date.now();
     S.perfiles.push({id,name,fRel:o.fRel,y0Rel:o.y0Rel,delta:o.delta,uF:0.40,
-      w:S.src.w, h:S.src.h, camaraId:S.calib.camaraId||"",
+      w:S.src.w, h:S.src.h, camaraId:S.calib.camaraId||"", uso:S.calib.uso||"foto",
       note:"Ajuste de "+o.n+" puntos, rms "+fmt(o.rms,2)+" px, "+S.src.w+"×"+S.src.h+" px"});
     S.perfilId=id; guarda(); pinta();
     alert(S.calib.camaraId
-      ? "Perfil guardado y asociado a la cámara «"+nombreCamara(S.calib.camaraId)+"». Ya figurará como calibrada en Directo."
+      ? "Perfil guardado y asociado a la cámara «"+nombreCamara(S.calib.camaraId)+"». Ya figurará como calibrada en vivo."
       : "Perfil guardado SIN asociar a ninguna cámara: habrá que elegirlo a mano en Foto o Vídeo.");
   });
   on("cSaveD","click",()=>{
@@ -1799,7 +1839,7 @@ function enlaza(){
       if(!q||!q.fRel||!q.y0Rel) continue;
       S.perfiles.push({id:"i"+Date.now()+"_"+(n++), name:(q.name||"perfil importado")+" (importado)",
         fRel:+q.fRel, y0Rel:+q.y0Rel, delta:+(q.delta||0), uF:+(q.uF||0.40),
-        w:q.w||null, h:q.h||null, camaraId:"",       // el enlace a cámara no es portable
+        w:q.w||null, h:q.h||null, camaraId:"", uso:q.uso||"foto",   // el enlace a cámara no es portable
         note:(q.note||"")+" · importado "+new Date().toISOString().slice(0,10)});
     }
     if(!n){ alert("Ninguno de los perfiles del texto era utilizable."); return; }
@@ -1819,6 +1859,14 @@ $$(".tab").forEach(b=>b.addEventListener("click",()=>{
   if (f.type && !f.type.startsWith("image/")){ alert("Ese archivo no es una imagen ("+f.type+")."); return; }
   cargaImagen(f);
 }));
+$("#fVidCal").addEventListener("change",e=>{
+  const f=e.target.files[0]; e.target.value="";
+  if(!f) return;
+  if(f.type && !f.type.startsWith("video/")){ alert("Ese archivo no es un vídeo ("+f.type+")."); return; }
+  S.calib.uso="video"; S.calib.origen="archivo"; S.calib.camaraId=""; S.calib.capId="";
+  S.calib.puntos.forEach(p=>p.y=null); S.calib.out=null;
+  cargaVideo(f);
+});
 ["fVid","fVidDoc"].forEach(id=>$("#"+id).addEventListener("change",e=>{
   const f=e.target.files[0]; e.target.value="";
   if (!f) return;
