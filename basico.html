@@ -143,7 +143,7 @@ const S = {
   src:null, srcCamId:"", camDistinta:false, zoomActual:null, zoomCap:null,
   marks:{ origen:null, puntos:[{lab:"Altura de funcionamiento", x:null, y:null, hReal:null}] },
   sel:-1, view:{s:1,tx:0,ty:0,fit:1}, liveErr:"", reticula:false, tec:false,
-  vista:"medir", sub:"camaras", cams:[], zoomCap:null, edEns:null,
+  vista:"medir", sub:"camaras", cams:[], zoomCap:null, edEns:null, selCal:0,
   calib:{ puntos:[], d:100, hCam:0, sensor:"", sensorRoll:"", out:null,
           tipo:"full", camaraId:"", uso:"vivo", capId:"", origen:"" }
 };
@@ -301,6 +301,7 @@ function congela(){
    esta, así que no hay inclinómetro que valga: el perfil se elige a mano y
    los dos ángulos de la toma se escriben. Es la diferencia de fondo entre
    medir en vivo y medir sobre un archivo, y por eso la interfaz cambia. */
+const enCalib = () => S.vista==="ajustes" && S.sub==="calib";
 const esArchivo = () => !!(S.src && S.src.origen==="archivo");
 const esVideo   = () => !!(S.src && S.src.kind==="video");
 const usoFuente = () => esArchivo() ? (esVideo()?"video":"foto") : "vivo";
@@ -402,7 +403,16 @@ function dibuja(){
     if(S.med.obliq) oblicuas(g);
     marca(S.marks.origen, "#f0883e", "ORIGEN", S.sel===-1);
   }
-  S.marks.puntos.forEach((q,i)=>{ if(q.y!==null) marca(q, COL[i%COL.length], String(i+1), S.sel===i); });
+  if(enCalib()){
+    /* En la pantalla de calibrar lo que hay que ver son las marcas de
+       calibración, no las de medida: sin ellas no se sabe cuáles están
+       puestas ni dónde, que es justo lo que hace falta para colocarlas. */
+    S.calib.puntos.forEach((q,i)=>{ if(q.y!==null && q.y!==undefined)
+      marca(q, COL[i%COL.length], (q.h===null||q.h===undefined?("marca "+(i+1)):fmtEtiq(+q.h)+" cm"),
+            S.selCal===i); });
+  } else {
+    S.marks.puntos.forEach((q,i)=>{ if(q.y!==null) marca(q, COL[i%COL.length], String(i+1), S.sel===i); });
+  }
   cruz();
   pintaNivel();
 }
@@ -526,7 +536,7 @@ function pinta(){
   $("#tbMed").className = "tb"+(S.vista==="medir"?" on":"");
   $("#tbAju").className = "tb"+(S.vista==="ajustes"?" on":"");
   $("#tit").textContent = S.vista==="medir" ? "Medida de alturas" : "Ajustes";
-  if(S.vista!=="medir"){ $("#pan").innerHTML=uiAjustes(); ataAjustes(); pintaNivel(); pintaFS(); return; }
+  if(S.vista!=="medir"){ $("#pan").innerHTML=uiAjustes(); ataAjustes(); dibuja(); pintaFS(); return; }
   let h="";
   const p=perfil(), pA=perfilDeCamara(S.camaraId);
 
@@ -724,7 +734,23 @@ function ata(){
 function pintaFS(){
   const bar=$("#fsbar"), num=$("#fsnum");
   if(!bar||!num) return;
-  if(!S.src || S.vista!=="medir"){ bar.innerHTML=""; num.innerHTML=""; return; }
+  if(!S.src || (S.vista!=="medir" && !enCalib())){ bar.innerHTML=""; num.innerHTML=""; return; }
+  if(enCalib()){
+    const P=S.calib.puntos;
+    bar.innerHTML = P.map((q,i)=>`<button class="${S.selCal===i?"p":""}" data-fs="c${i}">${
+      q.h===null||q.h===undefined?(i+1):fmtEtiq(+q.h)}</button>`).join("")
+      + `<button class="g" data-fs="cfijar"${dentro()?"":" disabled"}>Fijar</button>`
+      + `<button class="x" data-fs="salir">✕</button>`;
+    const puestas=P.filter(q=>q.y!==null&&q.y!==undefined).length;
+    num.innerHTML = puestas+" de "+P.length+" marcas puestas";
+    bar.querySelectorAll("[data-fs]").forEach(el=>el.addEventListener("click",ev=>{
+      const k=ev.currentTarget.dataset.fs;
+      if(k==="salir") return fsSale();
+      if(k==="cfijar"){ fijaCalib(S.selCal); return; }
+      if(k[0]==="c"){ S.selCal=+k.slice(1); pinta(); }
+    }));
+    return;
+  }
   const R=medidas();
   bar.innerHTML =
     `<button class="${S.sel===-1?"p":""}" data-fs="o">Origen</button>`
@@ -743,6 +769,14 @@ function pintaFS(){
     if(k==="fijar") fijaAqui();
   }));
 }
+function fijaCalib(i){
+  if(!dentro()) return;
+  const c=centroImg(), q=S.calib.puntos[i]; if(!q) return;
+  q.y=c.y; q.x=c.x; S.selCal=i;
+  const sig=S.calib.puntos.findIndex(z=>z.y===null||z.y===undefined);
+  if(sig>=0) S.selCal=sig;
+  pinta();
+}
 function fijaAqui(){
   if(!dentro()) return;
   const c=centroImg();
@@ -756,10 +790,12 @@ function fijaAqui(){
 
 /* ============================================================== ajustes */
 function uiAjustes(){
-  const T=[["camaras","Cámaras"],["calib","Calibrar"],["ensayos","Ensayos"],["datos","Datos"]];
+  const T=[["camaras","Cámaras"],["perfiles","Perfiles"],["calib","Calibrar"],
+           ["ensayos","Ensayos"],["datos","Datos"]];
   let h = `<div class="bt">${T.map(([k,n])=>
     `<button class="mini ${S.sub===k?"p":""} sub" data-k="${k}">${n}</button>`).join("")}</div>`;
   if(S.sub==="camaras") h+=uiCamaras();
+  else if(S.sub==="perfiles") h+=uiPerfiles();
   else if(S.sub==="calib") h+=uiCalibB();
   else if(S.sub==="ensayos") h+=uiEnsayos();
   else h+=uiDatos();
@@ -769,8 +805,9 @@ function uiAjustes(){
 /* ------------------------------------------------------------ cámaras */
 function uiCamaras(){
   let h = `<h2>Cámaras definidas</h2>`;
-  if(!S.camaras.length) h += `<div class="nota">Ninguna. Una «cámara» es un objetivo del móvil con un zoom
-    concreto: lo que se calibra. Añade una y calíbrala.</div>`;
+  const sueltos=S.perfiles.filter(q=>!q.camaraId).length;
+  if(!S.camaras.length) h += `<div class="nota">Ninguna. Una «cámara» es un objetivo de <b>este</b> móvil con un
+    zoom concreto. Añade una y calíbrala.</div>`;
   else h += `<table><tr><th>Nombre</th><th>Zoom</th><th>Estado</th><th></th></tr>
     ${S.camaras.map(c=>`<tr>
       <td>${c.nombre}</td>
@@ -779,8 +816,12 @@ function uiCamaras(){
         perfilDeCamara(c.id)?"calibrada":"sin calibrar"}</td>
       <td><button class="mini bor" data-id="${c.id}">borrar</button></td>
     </tr>`).join("")}</table>`;
-  h += `<h2>Añadir</h2>
-  <div class="bt"><button id="det">Detectar objetivos</button></div>
+  h += `<div class="nota">Aquí solo salen los objetivos de este móvil. Lo que calibres a partir de una foto o un
+  vídeo no es una cámara sino un <b>perfil</b>, y vive en la pestaña Perfiles${
+    sueltos?" — ahora mismo tienes "+sueltos+" sin cámara asociada":""}.</div>
+  <h2>Añadir</h2>
+  <div class="bt"><button id="det">Detectar objetivos</button></div>`;
+  h += `
   ${S.cams.length?`<div class="row"><label>Objetivo</label><select id="nDev">
       ${S.cams.map((d,i)=>`<option value="${d.deviceId}">${d.label||("objetivo "+(i+1))}</option>`).join("")}
     </select></div>
@@ -791,6 +832,34 @@ function uiCamaras(){
     ese mismo zoom: el campo de visión cambia y la calibración deja de valer.</div>`
    :`<div class="nota">Pulsa «Detectar objetivos». El navegador pedirá permiso de cámara, que hace falta para que
      dé los nombres de las lentes.</div>`}`;
+  return h;
+}
+
+/* ------------------------------------------------------------ perfiles
+
+   Cámara y perfil no son lo mismo, y confundirlos despista.
+
+   Una CÁMARA es un objetivo de este móvil con un zoom concreto: se elige al
+   medir en vivo. Un PERFIL es el resultado de una calibración: la óptica
+   resuelta de un objetivo para un uso. Un perfil de «en vivo» cuelga de una
+   cámara; uno de foto o de vídeo no cuelga de ninguna, porque la imagen venía
+   de un aparato que no es éste. Por eso lo que calibras desde una foto no
+   aparece en la lista de cámaras: no es una cámara, es un perfil.           */
+function uiPerfiles(){
+  let h = `<h2>Perfiles calibrados</h2>`;
+  if(!S.perfiles.length) return h + `<div class="nota">Ninguno todavía.</div>`;
+  h += `<table><tr><th>Perfil</th><th>Uso</th><th>Error</th><th></th></tr>
+    ${S.perfiles.map(q=>`<tr>
+      <td>${q.name}<br><span style="color:var(--dim)">${q.w?q.w+"×"+q.h:"sin tamaño"}${
+        q.camaraId?" · "+nombreCamara(q.camaraId):" · sin cámara"}${
+        q.datos?" · "+new Date(q.datos.fecha).toLocaleDateString("es-ES"):""}</span></td>
+      <td>${USOS[q.uso||"foto"]}</td>
+      <td class="u">${q.datos?fmt(q.datos.rms,2)+" px":"—"}</td>
+      <td><button class="mini pbor" data-id="${q.id}">borrar</button></td>
+    </tr>`).join("")}</table>
+  <div class="nota">Los perfiles <b>se comparten con la versión completa</b>: lo que borres aquí desaparece también
+  allí, porque las dos leen el mismo almacén de este navegador. Si quieres conservarlos antes de tocar nada,
+  expórtalos en la pestaña Datos.</div>`;
   return h;
 }
 
@@ -950,6 +1019,18 @@ function ataAjustes(){
     guarda(); pinta();
   }));
 
+  /* perfiles */
+  $$(".pbor").forEach(el=>el.addEventListener("click",e=>{
+    const id=e.currentTarget.dataset.id, q=S.perfiles.find(z=>z.id===id); if(!q) return;
+    if(!confirm("¿Borrar el perfil «"+q.name+"»?\n\n"
+      +"Se borra también en la versión completa: las dos usan el mismo almacén.\n\n"
+      +"Las medidas ya hechas y los informes ya emitidos no cambian, pero no podrás repetir una medida con este "
+      +"perfil ni auditar su calibración.")) return;
+    S.perfiles=S.perfiles.filter(z=>z.id!==id);
+    if(S.perfilId===id) S.perfilId = S.perfiles.length?S.perfiles[0].id:"";
+    guarda(); pinta();
+  }));
+
   /* calibración */
   on("cAbr","click",()=>{ S.vista="medir"; pinta(); setTimeout(()=>abreCamara(S.camaraId),50); });
   on("cImg","click",()=>{ S.pendCal=true; $("#fImg").click(); });
@@ -973,11 +1054,7 @@ function ataAjustes(){
   on("cCam","change",e=>{ S.calib.camaraId=e.target.value; pinta(); });
   $$(".cHh").forEach(el=>el.addEventListener("change",e=>{
     S.calib.puntos[+e.target.dataset.i].h = e.target.value===""?null:+e.target.value; }));
-  $$(".cFij").forEach(el=>el.addEventListener("click",e=>{
-    if(!dentro()) return;
-    const c=centroImg(), q=S.calib.puntos[+e.target.dataset.i];
-    q.y=c.y; q.x=c.x; pinta();
-  }));
+  $$(".cFij").forEach(el=>el.addEventListener("click",e=>fijaCalib(+e.currentTarget.dataset.i)));
   on("cMas","click",()=>{ S.calib.puntos.push({h:null,y:null,x:null}); pinta(); });
   on("cMenos","click",()=>{ if(S.calib.puntos.length>2){ S.calib.puntos.pop(); pinta(); } });
   on("cAjus","click",()=>{ S.calib.out=ajusta(); pinta(); });
