@@ -1856,7 +1856,7 @@ function uiCalib(){
     ${paso(!!E.perfil,"Perfil guardado"+(E.perfil?": "+E.perfil.name:""))}
     <div class="verdict ${E.perfil?"v-ok":(E.ajuste?"v-na":"v-no")}" style="text-align:left;font-weight:500">
       ${E.perfil ? "Objetivo calibrado. Al seleccionarlo en vivo, este perfil se activa solo."
-       : E.ajuste ? "Falta el último paso: pulsa <b>Guardar como perfil nuevo</b>, abajo del resultado del ajuste."
+       : E.ajuste ? "Falta el último paso: pulsa <b>"+rotuloGuardar()+"</b>, abajo del resultado del ajuste."
        : !E.geom ? "Siguiente: escribe la distancia horizontal y la altura de la lente."
        : E.alt<E.min ? "Siguiente: escribe la altura real de cada marca en la tabla de puntos."
        : E.fij<E.min ? "Siguiente: lleva la cruz sobre cada marca y pulsa <b>fijar</b> en su fila."
@@ -1972,7 +1972,7 @@ function uiCalib(){
       Si todas fallan por igual, suele ser un error en la altura de la lente.
       ${o.delta===null?"":"δ equivale a un sesgo de "+fmt(100*Math.abs(o.delta)*Math.PI/180,2)+" % de la distancia de observación si no se corrige."}</div>
       <div class="btns">
-        ${o.tipo==="full"?'<button class="g" id="cSave">Guardar como perfil nuevo</button>'
+        ${o.tipo==="full"?'<button class="g" id="cSave">'+rotuloGuardar()+'</button>'
           :(o.delta===null?'<button disabled>Aplicar δ: falta la lectura del inclinómetro</button>'
                           :'<button class="'+(Math.abs(o.delta)>DELTA_MAX?"":"g")+'" id="cSaveD">Aplicar δ al perfil activo</button>')}
         ${(o.tipo!=="full" && o.deltaRoll!==null && o.deltaRoll!==undefined)
@@ -1986,6 +1986,21 @@ function uiCalib(){
 /* Expediente de la calibración. Se guarda SIEMPRE que se toca un perfil con
    un ajuste, también al aplicar solo δ o δρ sobre un perfil que ya existía:
    antes esos dos caminos cambiaban el perfil sin dejar con qué comprobarlo. */
+/* El rótulo del botón cuenta lo que de verdad se está haciendo.
+
+   Calibrando desde la cámara en vivo, la cámara ya existe como configuración
+   con nombre: lo que se guarda es SU calibración, y si ya tenía una, lo
+   natural es sustituirla. Llamarlo «perfil nuevo» sugería crear algo suelto y
+   acababa dejando dos calibraciones de la misma cámara, de las que el modelo
+   usa la primera que encuentra.
+
+   Desde un vídeo o una foto no hay cámara que calibrar: la imagen viene de
+   fuera y lo que se crea sí es un perfil nuevo. */
+function rotuloGuardar(){
+  if ((S.calib.uso||"foto")!=="vivo") return "Guardar perfil nuevo";
+  return perfilDe(S.calib.camaraId,"vivo") ? "Guardar la calibración (sustituye la anterior)"
+                                           : "Guardar la calibración";
+}
 function registroCalib(o){
   return { fecha:new Date().toISOString(), d:+S.calib.d, hCam:+S.calib.hCam,
            sensor:vacio(S.calib.sensor)?null:+S.calib.sensor,
@@ -2321,26 +2336,49 @@ function enlaza(){
     guardaCam(); pinta();});
   on("cSave","click",()=>{
     const o=S.calib.out; if(!o||o.err) return;
+    const uso=S.calib.uso||"foto", enVivo=uso==="vivo";
     if(!S.calib.camaraId && !confirm("No has indicado de qué cámara es.\n\nEl perfil se guardará suelto y tendrás que buscarlo a mano cada vez.\n\n¿Guardar así?")) return;
-    const name=prompt("Nombre del perfil:",
-      (S.calib.camaraId? nombreCamara(S.calib.camaraId) : "cámara")+" · "+USOS[S.calib.uso||"foto"]+" "+S.src.w+"×"+S.src.h);
-    if(!name) return;
-    const id="p"+Date.now();
-    if(o.delta===null && !confirm("No hay lectura del inclinómetro, así que el perfil se guardará con δ = 0.\n\n"
+    /* Recalibrar una cámara en vivo SUSTITUYE su calibración. Dos
+       calibraciones de la misma cámara y el mismo uso no se eligen: el modelo
+       toma la primera que encuentra, que sería la vieja. Se pregunta siempre
+       antes de sustituir, y quien quiera conservar la anterior puede. */
+    const previo = enVivo ? perfilDe(S.calib.camaraId,"vivo") : null;
+    let sustituir=false;
+    if(previo){
+      sustituir = confirm("«"+nombreCamara(S.calib.camaraId)+"» ya tiene una calibración en vivo"
+        +(previo.datos?" del "+new Date(previo.datos.fecha).toLocaleDateString("es-ES"):"")
+        +(previo.datos?", con "+fmt(previo.datos.rms,2)+" px de error de ajuste":"")+".\n\n"
+        +"Aceptar: sustituirla por esta.\n"
+        +"Cancelar: conservar las dos (tendrás que elegir a mano cuál usas).");
+    }
+    if(o.delta===null && !confirm("No hay lectura del inclinómetro, así que se guardará con δ = 0.\n\n"
       +"Servirá para medir sobre fotos en las que anotes el ángulo a mano, pero NO para medir en vivo hasta que "
       +"midas δ.\n\n¿Guardar con δ = 0?")) return;
     if(o.delta!==null && Math.abs(o.delta)>DELTA_MAX && !confirm("δ = "+fmt(o.delta,2)+"° no es creíble: la "
       +"desalineación mecánica es de décimas de grado.\n\nSi lo guardas, la aplicación medirá con ese error de "
       +"inclinación frontal.\n\n¿Guardar de todas formas?")) return;
-    S.perfiles.push({id,name,fRel:o.fRel,y0Rel:o.y0Rel,delta:o.delta===null?0:o.delta,
+    let name;
+    if(sustituir) name = previo.name;
+    else {
+      name = prompt(enVivo?"Nombre de esta calibración:":"Nombre del perfil:",
+        (S.calib.camaraId? nombreCamara(S.calib.camaraId) : "cámara")+" · "+USOS[uso]+" "+S.src.w+"×"+S.src.h);
+      if(!name) return;
+    }
+    const datos = {fRel:o.fRel, y0Rel:o.y0Rel, delta:o.delta===null?0:o.delta,
       deltaRoll:(o.deltaRoll===null||o.deltaRoll===undefined)?0:+o.deltaRoll.toFixed(3), uF:0.40,
-      w:S.src.w, h:S.src.h, camaraId:S.calib.camaraId||"", uso:S.calib.uso||"foto",
+      w:S.src.w, h:S.src.h, camaraId:S.calib.camaraId||"", uso,
       datos:registroCalib(o),
-      note:"Ajuste de "+o.n+" puntos, rms "+fmt(o.rms,2)+" px, "+S.src.w+"×"+S.src.h+" px"});
+      note:"Ajuste de "+o.n+" puntos, rms "+fmt(o.rms,2)+" px, "+S.src.w+"×"+S.src.h+" px"};
+    let id;
+    if(sustituir){ id=previo.id; Object.assign(previo, datos, {id, name}); }
+    else { id="p"+Date.now(); S.perfiles.push(Object.assign({id,name}, datos)); }
     S.perfilId=id; guarda(); pinta();
-    alert(S.calib.camaraId
-      ? "Perfil guardado y asociado a la cámara «"+nombreCamara(S.calib.camaraId)+"». Ya figurará como calibrada en vivo."
-      : "Perfil guardado SIN asociar a ninguna cámara: habrá que elegirlo a mano en Foto o Vídeo.");
+    alert(sustituir
+      ? "Calibración de «"+nombreCamara(S.calib.camaraId)+"» sustituida."
+      : (S.calib.camaraId
+        ? (enVivo?"Calibración guardada y asociada a la cámara «":"Perfil guardado y asociado a la cámara «")
+          +nombreCamara(S.calib.camaraId)+"». Ya figurará como calibrada"+(enVivo?" en vivo":"")+"."
+        : "Perfil guardado SIN asociar a ninguna cámara: habrá que elegirlo a mano en Foto o Vídeo."));
   });
   on("cSaveD","click",()=>{
     const o=S.calib.out; if(!o||o.err||o.delta===null) return;
