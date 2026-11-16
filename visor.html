@@ -137,6 +137,15 @@ const fmt = (v,n=2) => (v===null||v===undefined||!isFinite(v)) ? "—" : v.toFix
    medida sí tenía. */
 const dec = v => Math.abs(v)<10 ? 3 : (Math.abs(v)<100 ? 2 : 1);
 const fmtH = v => fmt(v, dec(v));
+/* Las alturas de referencia las escribe el usuario y pueden llevar decimales.
+   Redondear la etiqueta a entero convertía «0,5 m» en «1 m»: la etiqueta
+   mentía sobre la línea que acompaña, que es peor que no etiquetar. Se usan
+   los decimales justos, hasta tres, y ninguno de más. */
+const fmtEtiq = v => {
+  if(v===null||v===undefined||!isFinite(v)) return "—";
+  for(const k of [0,1,2]) if(Math.abs(v-+v.toFixed(k))<1e-9) return fmt(v,k);
+  return fmt(v,3);
+};
 const COL = ["#4493f8","#3fb950","#d29922","#bc8cff","#39c5cf","#f778ba"];
 
 /* ---------------------------------------------------------------- estado */
@@ -157,7 +166,8 @@ const S = {
   perfilId: localStorage.getItem("vpd.perfilId") || PERFIL_BASE.id,
   med: JSON.parse(localStorage.getItem("vpd.med")||"null") || {
     d:100, ud:1.0, hRef:0, tol:20, upx:3, uphi:0.3, phiManual:"", rollManual:"",
-    obliq:false, angulos:"15, 30", horiz:false, alturas:"20, 30"
+    obliq:false, angulos:"15, 30", horiz:false, alturas:"20, 30",
+    ref:"", lote:"", cat:"", nEns:"", operador:"", lugar:"", obs:""
   },
   src:null,
   marks:{ origen:null, puntos:[{lab:"Altura de funcionamiento", x:null, y:null, hReal:null}] },
@@ -656,7 +666,7 @@ function dibujaHorizontales(){
   const ro=g.r(S.marks.origen.y,S.marks.origen.x);
   ctx.font="600 11px ui-monospace,monospace";
   for(const Hv of lista(S.med.alturas))
-    lineaMundo(g, g.yDe(ro+Hv/d)-g.y0, "#39c5cf", 1.4, [10,4], fmt(Hv,0)+" m", true);
+    lineaMundo(g, g.yDe(ro+Hv/d)-g.y0, "#39c5cf", 1.4, [10,4], fmtEtiq(Hv)+" m", true);
 }
 function dibujaReticula(){
   const g=geom(); if(!g||S.marks.origen===null) return;
@@ -668,7 +678,7 @@ function dibujaReticula(){
   ctx.font="600 11px ui-monospace,monospace";
   for (const [hv,col,lab] of sets)
     lineaMundo(g, g.yDe(ro+hv/d)-g.y0, col, lab==="nominal"?1:1.8,
-               lab==="nominal"?[3,6]:[], lab+"  "+fmt(hv,1)+" m", false);
+               lab==="nominal"?[3,6]:[], lab+"  "+fmtEtiq(hv)+" m", false);
 }
 function cruz(){
   const cx=W/2, cy=H/2;
@@ -1565,6 +1575,28 @@ function uiMedida(m){
   <br><br>Los valores por defecto, 15° y 20/30 m, corresponden a los límites que manejamos para voladores de F2 y
   F3. <b>Confírmalos contra la edición aplicable</b> antes de usarlos en un informe: son preajustes, no una cita.</div>`;
 
+  /* --- identificación e informe del ensayo --- */
+  h += `<h3>Identificación del ensayo</h3>
+  <div class="row"><label>Nº de ensayo</label><input type="text" id="eNum" value="${(S.med.nEns||"").replace(/"/g,"&quot;")}" placeholder="opcional"></div>
+  <div class="row"><label>Artículo o referencia</label><input type="text" id="eRef" value="${(S.med.ref||"").replace(/"/g,"&quot;")}" placeholder="opcional"></div>
+  <div class="row"><label>Lote</label><input type="text" id="eLote" value="${(S.med.lote||"").replace(/"/g,"&quot;")}" placeholder="opcional"></div>
+  <div class="row"><label>Categoría</label><input type="text" id="eCat" value="${(S.med.cat||"").replace(/"/g,"&quot;")}" placeholder="F1, F2, F3, F4, T, P"></div>
+  <div class="row"><label>Lugar</label><input type="text" id="eLug" value="${(S.med.lugar||"").replace(/"/g,"&quot;")}" placeholder="opcional"></div>
+  <div class="row"><label>Operador</label><input type="text" id="eOp" value="${(S.med.operador||"").replace(/"/g,"&quot;")}" placeholder="opcional"></div>
+  <textarea id="eObs" placeholder="Observaciones del ensayo (opcional)"
+    style="width:100%;min-height:54px;background:#0d1117;color:var(--txt);border:1px solid var(--line);
+    border-radius:6px;padding:8px;font:12.5px inherit">${(S.med.obs||"")}</textarea>
+  <div class="btns">
+    <button class="p" id="eInf">Informe del ensayo</button>
+    <button id="eDesc">Descargar</button>
+  </div>
+  <div class="note">El informe recoge la identificación, la trazabilidad hasta la calibración del objetivo, las
+  alturas con su incertidumbre, el presupuesto completo y, si has declarado altura nominal, el resultado frente al
+  intervalo admisible indicando con qué regla de decisión. Se copia al portapapeles al generarlo.</div>
+  <textarea id="eInfTxt" readonly placeholder="El informe aparece aquí"
+    style="width:100%;min-height:110px;background:#0d1117;color:var(--txt);border:1px solid var(--line);
+    border-radius:6px;padding:8px;font:11.5px ui-monospace,monospace"></textarea>`;
+
   /* --- bloque técnico --- */
   if (T && R){
     const hechos = R.filter(x=>x.y!==null);
@@ -2012,6 +2044,157 @@ function registroCalib(o){
            rho:o.roll?o.roll.rho:null, rhoRms:o.roll?o.roll.rms:null,
            deltaRoll:(o.deltaRoll===null||o.deltaRoll===undefined)?null:o.deltaRoll };
 }
+/* INFORME DE ENSAYO.
+
+   Registro de una verificación concreta. Lleva la trazabilidad completa hasta
+   la calibración del objetivo, porque una altura sin saber con qué óptica se
+   midió no se sostiene ante nadie. El veredicto se da frente al intervalo
+   admisible y se dice con qué regla de decisión, sin dar por buena ninguna:
+   si se resta la incertidumbre o no es cosa del criterio acordado, no del
+   instrumento, y presentarlo como un simple «cumple» sería impreciso.      */
+function informeEnsayo(){
+  const R=medidas(), p=perfil(), M=S.med;
+  if(!R||!p) return "No hay medidas que informar.";
+  const hechos=R.filter(x=>x.y!==null);
+  if(!hechos.length) return "No hay ninguna marca fijada.";
+  const d=+M.d, L=[];
+  const fila=(k,v)=>L.push("| "+k+" | "+v+" |");
+  const cab=(...c)=>{ L.push("| "+c.join(" | ")+" |"); L.push("|"+c.map(()=>"---").join("|")+"|"); };
+  const ang=(lec,apl)=>(lec===null?"—":fmt(lec,2)+"°")+" (eje óptico "+(apl===null?"—":fmt(apl,2)+"°")+")";
+
+  L.push("# Informe de verificación de altura","",
+    "Registro interno de medida. No sustituye a un organismo notificado ni a un laboratorio de ensayo acreditado.","",
+    "## 1. Identificación","");
+  cab("Campo","Valor");
+  fila("Fecha y hora", new Date().toLocaleString("es-ES"));
+  if(M.nEns) fila("Nº de ensayo", M.nEns);
+  if(M.ref) fila("Artículo o referencia", M.ref);
+  if(M.lote) fila("Lote", M.lote);
+  if(M.cat) fila("Categoría", M.cat);
+  if(M.lugar) fila("Lugar", M.lugar);
+  if(M.operador) fila("Operador", M.operador);
+  fila("Origen de la imagen", S.src ? ({live:"cámara en vivo", img:"imagen fija", video:"vídeo"}[S.src.kind]||S.src.kind) : "—");
+
+  L.push("","## 2. Equipo y trazabilidad","");
+  cab("Campo","Valor");
+  fila("Perfil óptico", p.name);
+  fila("Uso del perfil", USOS[p.uso||"foto"]);
+  fila("Cámara asociada", p.camaraId?nombreCamara(p.camaraId):"ninguna");
+  fila("Fotograma del ensayo", S.src?(S.src.w+"×"+S.src.h+" px"):"—");
+  fila("Fotograma de la calibración", p.w?(p.w+"×"+p.h+" px"):"sin registrar");
+  fila("Focal relativa a la altura del fotograma", fmt(p.fRel,5));
+  fila("Centro óptico relativo", fmt(p.y0Rel,5));
+  fila("Desalineación δ · frontal", fmt(p.delta,3)+"°");
+  fila("Desalineación δρ · lateral", fmt(+p.deltaRoll||0,3)+"°");
+  fila("Error asignado a la focal", fmt(p.uF,2)+" %");
+  if(p.datos){
+    fila("Fecha de la calibración", new Date(p.datos.fecha).toLocaleDateString("es-ES"));
+    fila("Marcas de la calibración", p.datos.puntos.length);
+    fila("Error de ajuste de la calibración", fmt(p.datos.rms,2)+" px");
+    fila("Distancia y altura de lente en calibración", fmt(p.datos.d,1)+" cm / "+fmt(p.datos.hCam,1)+" cm");
+  } else fila("Calibración", "el perfil no conserva sus datos de calibración");
+
+  L.push("","## 3. Condiciones de la observación","");
+  cab("Campo","Valor");
+  fila("Distancia de observación", fmt(d,3)+" m");
+  fila("Incertidumbre asignada a la distancia", fmt(+M.ud,2)+" %");
+  fila("Inclinación frontal", ang(tiltLeido(), tiltUsado()));
+  fila("Inclinación lateral", ang(rollLeido(), rollUsado()));
+  fila("Incertidumbre de la inclinación", "± "+fmt(+M.uphi,2)+"°");
+  fila("Error de marcado asignado", "± "+fmt(+M.upx,1)+" px");
+  fila("Altura del origen sobre el plano de referencia", fmt(+M.hRef||0,3)+" m");
+  fila("Origen", "punto de disparo, fijado sobre la imagen");
+
+  L.push("","## 4. Resultados","");
+  const hayReal = hechos.some(x=>x.hReal!==null&&x.hReal!==undefined&&isFinite(+x.hReal));
+  if(hayReal) cab("Marca","Altura medida (m)","% de la distancia","U k=2 (m)","U relativa","Altura real (m)","Error (m)");
+  else cab("Marca","Altura medida (m)","% de la distancia","U k=2 (m)","U relativa");
+  hechos.forEach((x,i)=>{
+    const base=["| "+(x.lab||("marca "+(i+1))), fmtH(x.H), fmt(100*x.dH/d,2)+" %",
+                fmtH(x.U), x.relU===null?"—":fmt(x.relU,2)+" %"];
+    if(hayReal){ const hr=(x.hReal!==null&&x.hReal!==undefined&&isFinite(+x.hReal))?+x.hReal:null;
+      base.push(hr===null?"—":fmtH(hr), hr===null?"—":fmtH(x.dH-hr)); }
+    L.push(base.join(" | ")+" |");
+  });
+  if(hechos.length>1){
+    L.push("","Separación entre marcas consecutivas, en metros: "
+      + hechos.slice(1).map((x,k)=>fmtH(x.dH-hechos[k].dH)).join(" / ")+".");
+  }
+
+  const may=hechos.reduce((a,b)=>Math.abs(b.dH)>Math.abs(a.dH)?b:a);
+  L.push("","## 5. Presupuesto de incertidumbre","",
+    "Contribuciones a la marca de mayor altura ("+(may.lab||"sin etiqueta")+", "+fmtH(may.dH)+" m), en metros.","");
+  cab("Contribución","Valor (m)");
+  fila("Distancia de observación", fmtH(may.comp.cDist));
+  fila("Focal del perfil", fmtH(may.comp.cF));
+  fila("Inclinación frontal", fmtH(may.comp.cPhi));
+  fila("Marcado del origen", fmtH(may.comp.cPo));
+  fila("Marcado del punto", fmtH(may.comp.cPt));
+  fila("Separación lateral con inclinación lateral", fmtH(may.comp.cRoll));
+  fila("Incertidumbre típica combinada", fmtH(may.uc));
+  fila("Incertidumbre expandida U (k = 2)", fmtH(may.U));
+  L.push("","Las contribuciones se combinan en cuadratura. El factor k = 2 corresponde a una probabilidad de",
+    "cobertura próxima al 95 % suponiendo distribución normal.");
+
+  const cmp=hechos.filter(x=>x.hReal!==null&&x.hReal!==undefined&&isFinite(+x.hReal));
+  if(cmp.length>=2){
+    const nn=cmp.length, sx=cmp.reduce((t,x)=>t+(+x.hReal),0), sy=cmp.reduce((t,x)=>t+x.dH,0);
+    const sxx=cmp.reduce((t,x)=>t+(+x.hReal)*(+x.hReal),0), sxy=cmp.reduce((t,x)=>t+(+x.hReal)*x.dH,0);
+    const det=nn*sxx-sx*sx, aE=det?(nn*sxy-sx*sy)/det:1, bE=det?(sy-aE*sx)/nn:0;
+    const rr=Math.sqrt(cmp.reduce((t,x)=>t+Math.pow(x.dH-(aE*(+x.hReal)+bE),2),0)/nn);
+    L.push("","## 6. Comprobación con alturas conocidas","",
+      "Ajuste de medida = a · real + b sobre "+nn+" marcas de altura conocida.","");
+    cab("Parámetro","Valor");
+    fila("a, escala", fmt(aE,4));
+    fila("b, desfase de origen", fmt(bE*100,1)+" cm");
+    fila("Dispersión alrededor de la recta", fmt(rr*100,1)+" cm");
+    L.push("","Una escala distinta de 1 indica error en la distancia de observación o en la focal del perfil, que son",
+      "las dos únicas causas de un factor constante. Un desfase indica error de origen, que no escala con la altura.");
+  }
+
+  L.push("","## "+(cmp.length>=2?"7":"6")+". Criterio y resultado","");
+  const hn=+M.hNom, tol=+M.tol;
+  if(hn && isFinite(hn) && hn>0){
+    const lo=hn*(1-tol/100), hi=hn*(1+tol/100);
+    const v=may.H, dentro=v>=lo&&v<=hi;
+    const seguro=(v-may.U)>=lo && (v+may.U)<=hi;
+    const fuera=(v+may.U)<lo || (v-may.U)>hi;
+    cab("Campo","Valor");
+    fila("Altura declarada", fmtH(hn)+" m");
+    fila("Tolerancia aplicada", "± "+fmt(tol,0)+" %");
+    fila("Intervalo admisible", fmtH(lo)+" m a "+fmtH(hi)+" m");
+    fila("Altura medida", fmtH(v)+" m");
+    fila("Incertidumbre expandida", "± "+fmtH(may.U)+" m (k = 2)");
+    fila("Valor medido respecto al intervalo", dentro?"dentro":"fuera");
+    L.push("");
+    L.push(seguro
+      ? "El intervalo medido ± U queda **íntegramente dentro** del intervalo admisible: conforme con cualquier regla de decisión."
+      : fuera
+      ? "El intervalo medido ± U queda **íntegramente fuera** del intervalo admisible: no conforme con cualquier regla de decisión."
+      : "El valor medido queda "+(dentro?"dentro":"fuera")+" del intervalo admisible, pero el intervalo medido ± U **cruza el límite**. "
+        +"El resultado depende entonces de la regla de decisión acordada: con aceptación simple (comparar solo el valor medido) "
+        +"el resultado sería "+(dentro?"conforme":"no conforme")+"; con banda de guarda de una incertidumbre expandida, no puede "
+        +"declararse la conformidad. La regla de decisión la fija el criterio acordado, no el instrumento.");
+  } else {
+    L.push("No se ha declarado altura nominal, así que no se emite juicio de conformidad: el informe recoge solo el",
+      "resultado de la medida con su incertidumbre.");
+  }
+
+  if(M.obs) L.push("","### Observaciones","",M.obs);
+
+  L.push("","## "+(cmp.length>=2?"8":"7")+". Limitaciones y salvedades","",
+    "1. La altura se obtiene como fracción de la distancia de observación: todo error en esa distancia se traslada",
+    "   proporcionalmente al resultado. La distancia debe medirse, no estimarse.",
+    "2. El método supone que el punto de disparo y el punto medido están a la misma distancia horizontal de la cámara.",
+    "   Un desplazamiento del efecto en profundidad no se detecta y no está incluido en el presupuesto.",
+    "3. El presupuesto no cubre errores groseros: origen mal fijado, perfil que no corresponde al objetivo realmente",
+    "   usado, o un efecto cuyo punto de altura máxima no se aprecie con nitidez en la imagen.",
+    "4. La incertidumbre declarada supone que la calibración del objetivo sigue siendo válida. Un cambio de objetivo,",
+    "   de recorte o de zoom respecto a las condiciones de calibración introduce un error de escala no cubierto aquí.",
+    "5. Instrumento de verificación interna. No sustituye el dictamen de un organismo notificado ni el ensayo en",
+    "   laboratorio acreditado.","");
+  return L.join("\n");
+}
 function informeCalib(p){
   if(!p||!p.datos) return "Este perfil no guarda datos de calibración.";
   const D=p.datos, L=[];
@@ -2271,6 +2454,23 @@ function enlaza(){
   on("iPerf","change",e=>{S.perfilId=e.target.value; guarda(); pinta();});
   num("iD","d",S.med); num("iUd","ud",S.med); num("iHref","hRef",S.med);
   num("iHnom","hNom",S.med); num("iTol","tol",S.med);
+  [["eNum","nEns"],["eRef","ref"],["eLote","lote"],["eCat","cat"],["eLug","lugar"],
+   ["eOp","operador"],["eObs","obs"]].forEach(([id,k])=>{
+    const el=$("#"+id); if(!el) return;
+    el.addEventListener("change",()=>{ S.med[k]=el.value; guarda(); });
+  });
+  on("eInf","click",()=>{ const t=$("#eInfTxt"); if(!t) return;
+    t.value=informeEnsayo(); t.select(); navigator.clipboard?.writeText(t.value); });
+  on("eDesc","click",()=>{
+    const txt=informeEnsayo();
+    const nom="ensayo-"+(S.med.nEns||S.med.ref||"sin-referencia").replace(/[^\w.-]+/g,"_")
+      +"-"+new Date().toISOString().slice(0,10)+".md";
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(new Blob([txt],{type:"text/markdown;charset=utf-8"}));
+    a.download=nom; document.body.appendChild(a); a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },1000);
+    const t=$("#eInfTxt"); if(t) t.value=txt;
+  });
   num("iPhi","phiManual",S.med); num("iRoll","rollManual",S.med);
 
   // vídeo
@@ -2434,6 +2634,7 @@ function enlaza(){
     S.capturas=[];
     S.perfiles=[]; S.perfilId="";
     S.med={d:100, ud:1.0, hRef:0, tol:20, upx:3, uphi:0.3, phiManual:"", rollManual:"",
+      ref:"", lote:"", cat:"", nEns:"", operador:"", lugar:"", obs:"",
            obliq:false, angulos:"15, 30", horiz:false, alturas:"20, 30"};
     S.srcCamId=""; localStorage.removeItem("vpd.camId");
     S.calib={puntos:[], d:100, hCam:0, sensor:"", sensorRoll:"", out:null, tipo:"phi", camId:"", origen:"", capId:""};
