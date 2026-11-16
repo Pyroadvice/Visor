@@ -1107,8 +1107,8 @@ function uiMedida(m){
     <div class="res">
       <div class="kv"><span>perfil</span><b>${perfil().name}</b></div>
       <div class="kv"><span>fotograma</span><b>${S.src.w}×${S.src.h} px</b></div>
-      <div class="kv"><span>focal f</span><b>${fmt(g.f,1)} px (${fmt(perfil().fRel,5)})</b></div>
-      <div class="kv"><span>centro óptico y₀</span><b>${fmt(g.y0,1)} px (${fmt(perfil().y0Rel,5)})</b></div>
+      <div class="kv"><span>distancia focal (f)</span><b>${fmt(g.f,1)} px (${fmt(perfil().fRel,5)})</b></div>
+      <div class="kv"><span>centro óptico (y₀)</span><b>${fmt(g.y0,1)} px (${fmt(perfil().y0Rel,5)})</b></div>
       <div class="kv"><span>desalineación del sensor δ</span><b>${(perfil().delta>=0?"+":"")+fmt(perfil().delta,3)}°</b></div>
       <div class="kv"><span>cabeceo aplicado</span><b>${tt===null?"—":(tt>=0?"+":"")+fmt(tt,3)+"°"}</b></div>
       <div class="kv"><span>error de marcado · de cabeceo</span><b>${fmt(S.med.upx,1)} px · ${fmt(S.med.uphi,2)}°</b></div>
@@ -1187,14 +1187,14 @@ function estadoCalib(){
 function uiCalib(){
   const o = S.calib.out, esPhi = S.calib.tipo==="phi";
   let h = `<div class="seg">
-    <button class="${esPhi?"":"on"}" id="kFull">Óptica (f, y₀, φ)</button>
-    <button class="${esPhi?"on":""}" id="kPhi">Solo desalineación</button>
+    <button class="${esPhi?"":"on"}" id="kFull">Calibrar el objetivo</button>
+    <button class="${esPhi?"on":""}" id="kPhi">Ajustar el inclinómetro</button>
   </div>
-  ${esPhi?`<div class="verdict v-na" style="text-align:left;font-weight:500">Este modo <b>no crea perfiles</b>:
-    solo recalcula δ sobre el perfil activo. Para calibrar un objetivo nuevo, cambia a «Óptica».</div>`:""}
+  ${esPhi?`<div class="verdict v-na" style="text-align:left;font-weight:500">Este modo <b>no crea perfiles</b>.
+    Para calibrar un objetivo nuevo, cambia a «Calibrar el objetivo».</div>`:""}
   <div class="note">${esPhi
-    ? "Ajusta <b>una sola incógnita</b>, la inclinación óptica de la toma, tomando f e y₀ del perfil activo. Al restarle la lectura del sensor sale la desalineación δ. Es el único ajuste fiable para δ: repítelo en dos o tres fotos con inclinaciones distintas y comprueba que concuerdan dentro de una décima de grado."
-    : "Ajusta focal, centro óptico e inclinación a la vez. <b>Con las marcas en una sola vertical y una sola distancia los tres parámetros están correlacionados</b>: el residuo puede salir bajo y los valores individuales ser poco fiables. Úsalo para obtener f e y₀ promediando varias tomas, y <b>no lo uses para la desalineación</b>."}</div>
+    ? "Corrige el pequeño desfase entre el sensor de inclinación del móvil y hacia dónde mira realmente la lente. <b>Solo sirve si el objetivo ya está calibrado</b>, y no crea perfiles nuevos. Para fiarte del resultado, repítelo en dos o tres fotos tomadas con inclinaciones distintas y comprueba que sale casi lo mismo."
+    : "<b>Esta es la calibración normal.</b> Mide cómo ve esta cámara, que es lo que hace falta para que las alturas salgan bien. Se hace una vez por cada objetivo y cada modo de captura.<br><br>Conviene repetirla sobre una segunda toma y comprobar que sale lo mismo: con todas las marcas en una sola vertical, un resultado puede parecer bueno sin serlo."}</div>
   <div class="btns"><button class="p" id="bCamCal">Cámara</button>
     <button id="bLoadImg">Galería</button>
     <button id="bLoadDoc">Archivo</button></div>`;
@@ -1249,7 +1249,7 @@ function uiCalib(){
     ${paso(E.geom,"Distancia y altura de lente introducidas")}
     ${paso(E.alt>=E.min,"Alturas de las marcas escritas ("+E.alt+" de "+E.nTot+")")}
     ${paso(E.fij>=E.min,"Marcas fijadas con la cruz ("+E.fij+" de "+E.nTot+", mínimo "+E.min+")")}
-    ${paso(E.ajuste,"Ajuste calculado")}
+    ${paso(E.ajuste,"Cálculo hecho")}
     ${paso(!!E.perfil,"Perfil guardado para este objetivo"+(E.perfil?": "+E.perfil.name:""))}
     <div class="verdict ${E.perfil?"v-ok":(E.ajuste?"v-na":"v-no")}" style="text-align:left;font-weight:500">
       ${E.perfil ? "Objetivo calibrado. Al seleccionarlo en Directo, este perfil se activa solo."
@@ -1289,19 +1289,19 @@ function uiCalib(){
       h += `<h3>Resultado del ajuste</h3><div class="res">
       ${o.tipo==="full" ? `
       <div class="kv"><span>focal f</span><b>${fmt(o.f,1)} px</b></div>
-      <div class="kv"><span>f / altura de fotograma</span><b>${fmt(o.fRel,5)}</b></div>
+      <div class="kv"><span>focal relativa al fotograma</span><b>${fmt(o.fRel,5)}</b></div>
       <div class="kv"><span>centro óptico y₀</span><b>${fmt(o.y0,1)} px (${fmt(o.y0Rel,5)})</b></div>`
-      : `<div class="kv"><span>f e y₀ del perfil</span><b>${fmt(o.fRel,5)} / ${fmt(o.y0Rel,5)}</b></div>`}
-      <div class="kv"><span>inclinación óptica φ</span><b>${(o.phi>=0?"+":"")+fmt(o.phi,3)}°</b></div>
-      <div class="kv"><span>lectura del sensor</span><b>${(+S.calib.sensor>=0?"+":"")+fmt(+S.calib.sensor,2)}°</b></div>
-      <div class="big" style="margin-top:6px"><s>Desalineación δ</s><b>${(o.delta>=0?"+":"")+fmt(o.delta,3)}°</b></div>
-      <div class="kv"><span>residuo rms</span><b>${fmt(o.rms,2)} px (${o.n} puntos)</b></div>
+      : `<div class="kv"><span>óptica tomada del perfil</span><b>${fmt(o.fRel,5)} / ${fmt(o.y0Rel,5)}</b></div>`}
+      <div class="kv"><span>inclinación real de la toma</span><b>${(o.phi>=0?"+":"")+fmt(o.phi,3)}°</b></div>
+      <div class="kv"><span>lo que marcaba el sensor</span><b>${(+S.calib.sensor>=0?"+":"")+fmt(+S.calib.sensor,2)}°</b></div>
+      <div class="big" style="margin-top:6px"><s>Desfase del sensor (δ)</s><b>${(o.delta>=0?"+":"")+fmt(o.delta,3)}°</b></div>
+      <div class="kv"><span>error de ajuste</span><b>${fmt(o.rms,2)} px (${o.n} puntos)</b></div>
       <div class="verdict ${malo?"v-na":"v-ok"}">${malo
-        ?"Residuo alto: revisa alturas, distancia y el enfoque de las marcas"
-        :"Ajuste consistente"}</div></div>
-      <div class="note">Residuos por punto: ${o.res.map(v=>fmt(v,1)).join(" / ")} px.
-      Un residuo que crece hacia los extremos indica distorsión óptica o focal mal resuelta;
-      un desplazamiento constante indica error en la altura de la lente.
+        ?"Ajuste pobre: revisa las alturas escritas, la distancia y que las marcas se vean nítidas"
+        :"Ajuste correcto"}</div></div>
+      <div class="note">Desajuste de cada marca, en píxeles: ${o.res.map(v=>fmt(v,1)).join(" / ")}.
+      Si crece hacia las marcas de arriba y de abajo, suele ser distorsión del objetivo o una focal mal resuelta.
+      Si todas fallan por igual, suele ser un error en la altura de la lente.
       δ equivale a un sesgo de ${fmt(100*Math.abs(o.delta)*Math.PI/180,2)} % de la distancia de observación si no se corrige.</div>
       <div class="btns">
         ${o.tipo==="full"?'<button class="g" id="cSave">Guardar como perfil nuevo</button>'
