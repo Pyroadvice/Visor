@@ -18,7 +18,10 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);
   border-bottom:1px solid var(--line);flex:0 0 auto}
 #top a{color:var(--dim);text-decoration:none;font-size:20px;line-height:1}
 #top h1{font-size:15px;margin:0;font-weight:600;flex:1}
-#top .lk{font-size:12.5px;color:var(--acc)}
+#top .tb{flex:0 0 auto;min-width:0;padding:7px 12px;font-size:13px;border-radius:7px;
+  background:#21262d;border:1px solid var(--line)}
+#top .tb.on{background:var(--acc);border-color:var(--acc);color:#fff}
+#top h1{font-size:14px}
 #lienzo{position:relative;flex:1 1 auto;min-height:180px;background:#000;touch-action:none}
 canvas{display:block;width:100%;height:100%}
 #nivel{position:absolute;top:8px;left:8px;background:rgba(13,17,23,.82);border:1px solid var(--line);
@@ -61,13 +64,15 @@ textarea{width:100%;min-height:80px;background:#0d1117;color:var(--txt);border:1
 <div id="wrap">
   <div id="top">
     <a href="index.html" title="Inicio">⌂</a>
-    <h1>Medida de alturas</h1>
-    <a class="lk" href="visor.html">versión completa</a>
+    <h1 id="tit">Medida de alturas</h1>
+    <button class="tb" id="tbMed">Medir</button>
+    <button class="tb" id="tbAju">Ajustes</button>
   </div>
   <div id="lienzo">
     <canvas id="cv"></canvas>
     <div id="nivel"></div>
-    <div id="aviso"></div>
+    <div class="fsnum" id="fsnum"></div>
+    <div class="fsbar" id="fsbar"></div>
   </div>
   <div id="pan"></div>
 </div>
@@ -75,6 +80,9 @@ textarea{width:100%;min-height:80px;background:#0d1117;color:var(--txt);border:1
 
 <script src="modelo.js"></script>
 <script src="ensayos.js"></script>
+<script src="calib.js"></script>
+<script src="datos.js"></script>
+<script src="pantalla.js"></script>
 <script>
 "use strict";
 /* ====================================================================
@@ -122,7 +130,10 @@ const S = {
   med: JSON.parse(localStorage.getItem("vpd.med")||"null") || {},
   src:null, srcCamId:"", camDistinta:false, zoomActual:null, zoomCap:null,
   marks:{ origen:null, puntos:[{lab:"Altura de funcionamiento", x:null, y:null, hReal:null}] },
-  sel:-1, view:{s:1,tx:0,ty:0,fit:1}, liveErr:"", reticula:false, tec:false
+  sel:-1, view:{s:1,tx:0,ty:0,fit:1}, liveErr:"", reticula:false, tec:false,
+  vista:"medir", sub:"camaras", cams:[], zoomCap:null, edEns:null,
+  calib:{ puntos:[], d:100, hCam:0, sensor:"", sensorRoll:"", out:null,
+          tipo:"full", camaraId:"", uso:"vivo", capId:"", origen:"" }
 };
 /* Valores por omisión para las claves que el visor completo escribe y
    que aquí podrían faltar si nunca se ha abierto aquél. */
@@ -134,10 +145,13 @@ Object.entries({d:100, ud:1.0, hRef:0, tol:20, upx:3, uphi:0.3, phiManual:"", ro
 function guarda(){
   try{
     localStorage.setItem("vpd.med", JSON.stringify(S.med));
+    localStorage.setItem("vpd.perfiles", JSON.stringify(S.perfiles));
+    localStorage.setItem("vpd.camaras", JSON.stringify(S.camaras));
     localStorage.setItem("vpd.perfilId", S.perfilId);
     localStorage.setItem("vpd.camaraId", S.camaraId);
   }catch(e){}
 }
+const guardaCam = guarda;
 /* El visor completo puede haber cambiado perfiles o cámaras en otra
    pestaña. Se releen al volver a esta, para no medir con algo retirado. */
 function relee(){
@@ -430,11 +444,19 @@ cv.addEventListener("pointermove",e=>{
 function pinta(){
   if(!W) mide();
   if(S.src && !esVivo()) dibuja();
+  $("#tbMed").className = "tb"+(S.vista==="medir"?" on":"");
+  $("#tbAju").className = "tb"+(S.vista==="ajustes"?" on":"");
+  $("#tit").textContent = S.vista==="medir" ? "Medida de alturas" : "Ajustes";
+  if(S.vista!=="medir"){ $("#pan").innerHTML=uiAjustes(); ataAjustes(); pintaNivel(); pintaFS(); return; }
   let h="";
   const p=perfil(), pA=perfilDeCamara(S.camaraId);
 
   /* --- cámara --- */
   h += `<h2>Cámara</h2>`;
+  if(!S.perfiles.length && !S.camaras.length)
+    h += `<div class="nota">Sin cámaras ni calibraciones. Puedes definirlas y calibrarlas aquí, en Ajustes, o
+      traerlas de otro aparato desde Ajustes · Datos. También existe la <a href="visor.html"
+      style="color:var(--acc)">versión completa</a>, con análisis de foto y vídeo.</div>`;
   if(!S.camaras.length){
     h += `<div class="ver v-no">No hay ninguna cámara definida.</div>
     <div class="nota">Las cámaras y sus calibraciones se crean en la versión completa. Allí se define la cámara,
@@ -486,7 +508,8 @@ function pinta(){
       <button class="mini" id="masP">+</button>
     </div>
     <div class="bt"><button class="g" id="fijar" ${dentro()?"":"disabled"}>Fijar ${
-      S.sel===-1?"el origen":"el punto "+(S.sel+1)}</button></div>
+      S.sel===-1?"el origen":"el punto "+(S.sel+1)}</button>
+      <button id="bFS">Pantalla completa</button></div>
     ${S.marks.origen?"":'<div class="nota">Pon la cruz sobre el punto de disparo y fija el origen. Las alturas se miden desde ahí.</div>'}
     <table><tr><th>Marca</th><th style="text-align:right">Altura</th><th style="text-align:right">±</th></tr>
     ${S.marks.puntos.map((q,i)=>{
@@ -524,12 +547,12 @@ function pinta(){
   }
 
   $("#pan").innerHTML=h;
-  ata();
-  $("#aviso").style.display="none";
+  ata(); pintaFS();
 }
 
 function ata(){
   const on=(id,ev,fn)=>{ const el=$("#"+id); if(el) el.addEventListener(ev,fn); };
+  on("bFS","click",()=>fsAlterna($("#lienzo")));
   on("cam","change",async e=>{ cierraCamara(); S.camaraId=e.target.value; guarda();
     const a=perfilDeCamara(S.camaraId); if(a){ S.perfilId=a.id; guarda(); } await abreCamara(S.camaraId); });
   on("bAbr","click",()=>abreCamara(S.camaraId));
@@ -552,13 +575,7 @@ function ata(){
   $$(".selP").forEach(el=>el.addEventListener("click",e=>{ S.sel=+e.target.dataset.i; pinta(); }));
   on("masP","click",()=>{ S.marks.puntos.push({lab:"",x:null,y:null,hReal:null});
     S.sel=S.marks.puntos.length-1; pinta(); });
-  on("fijar","click",()=>{
-    if(!dentro()) return;
-    const c=centroImg();
-    if(S.sel===-1) S.marks.origen={x:c.x,y:c.y};
-    else { const q=S.marks.puntos[S.sel]; q.x=c.x; q.y=c.y; }
-    pinta();
-  });
+  on("fijar","click",fijaAqui);
   $$(".lab").forEach(el=>el.addEventListener("change",e=>{
     S.marks.puntos[+e.target.dataset.i].lab=e.target.value; }));
   [["eNum","nEns"],["eRef","ref"],["eLote","lote"]].forEach(([id,k])=>
@@ -575,6 +592,342 @@ function ata(){
     setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },1000);
     $("#infTxt").value=txt;
   });
+}
+
+
+/* ======================================================= pantalla completa */
+function pintaFS(){
+  const bar=$("#fsbar"), num=$("#fsnum");
+  if(!bar||!num) return;
+  if(!S.src || S.vista!=="medir"){ bar.innerHTML=""; num.innerHTML=""; return; }
+  const R=medidas();
+  bar.innerHTML =
+    `<button class="${S.sel===-1?"p":""}" data-fs="o">Origen</button>`
+    + S.marks.puntos.map((q,i)=>`<button class="${S.sel===i?"p":""}" data-fs="p${i}">${i+1}</button>`).join("")
+    + `<button class="g" data-fs="fijar"${dentro()?"":" disabled"}>Fijar</button>`
+    + `<button class="x" data-fs="salir">✕</button>`;
+  const he = R ? R.filter(x=>x.y!==null) : [];
+  num.innerHTML = he.length
+    ? he.map((x,i)=>`${x.lab||("marca "+(i+1))}: <b>${fmtH(x.H)}</b> ± ${fmtH(x.U)} m`).join("<br>")
+    : (S.marks.origen ? "pon la cruz y pulsa Fijar" : "fija primero el origen");
+  bar.querySelectorAll("[data-fs]").forEach(el=>el.addEventListener("click",ev=>{
+    const k=ev.currentTarget.dataset.fs;
+    if(k==="salir") return fsSale();
+    if(k==="o"){ S.sel=-1; pinta(); return; }
+    if(k[0]==="p"){ S.sel=+k.slice(1); pinta(); return; }
+    if(k==="fijar") fijaAqui();
+  }));
+}
+function fijaAqui(){
+  if(!dentro()) return;
+  const c=centroImg();
+  if(S.sel===-1){
+    S.marks.origen={x:c.x,y:c.y};
+    const sig=S.marks.puntos.findIndex(q=>q.y===null);
+    S.sel = sig>=0?sig:0;
+  } else { const q=S.marks.puntos[S.sel]; q.x=c.x; q.y=c.y; }
+  pinta();
+}
+
+/* ============================================================== ajustes */
+function uiAjustes(){
+  const T=[["camaras","Cámaras"],["calib","Calibrar"],["ensayos","Ensayos"],["datos","Datos"]];
+  let h = `<div class="bt">${T.map(([k,n])=>
+    `<button class="mini ${S.sub===k?"p":""} sub" data-k="${k}">${n}</button>`).join("")}</div>`;
+  if(S.sub==="camaras") h+=uiCamaras();
+  else if(S.sub==="calib") h+=uiCalibB();
+  else if(S.sub==="ensayos") h+=uiEnsayos();
+  else h+=uiDatos();
+  return h;
+}
+
+/* ------------------------------------------------------------ cámaras */
+function uiCamaras(){
+  let h = `<h2>Cámaras definidas</h2>`;
+  if(!S.camaras.length) h += `<div class="nota">Ninguna. Una «cámara» es un objetivo del móvil con un zoom
+    concreto: lo que se calibra. Añade una y calíbrala.</div>`;
+  else h += `<table><tr><th>Nombre</th><th>Zoom</th><th>Estado</th><th></th></tr>
+    ${S.camaras.map(c=>`<tr>
+      <td>${c.nombre}</td>
+      <td>${c.zoom===null||c.zoom===undefined?"—":"×"+fmt(c.zoom,1)}</td>
+      <td style="color:${perfilDeCamara(c.id)?"var(--ok)":"var(--warn)"}">${
+        perfilDeCamara(c.id)?"calibrada":"sin calibrar"}</td>
+      <td><button class="mini bor" data-id="${c.id}">borrar</button></td>
+    </tr>`).join("")}</table>`;
+  h += `<h2>Añadir</h2>
+  <div class="bt"><button id="det">Detectar objetivos</button></div>
+  ${S.cams.length?`<div class="row"><label>Objetivo</label><select id="nDev">
+      ${S.cams.map((d,i)=>`<option value="${d.deviceId}">${d.label||("objetivo "+(i+1))}</option>`).join("")}
+    </select></div>
+    <div class="row"><label>Nombre</label><input type="text" id="nNom" placeholder="p. ej. S26+ principal ×1"></div>
+    <div class="row"><label>Zoom</label><input type="number" step="0.1" id="nZoom" placeholder="opcional"></div>
+    <div class="bt"><button class="p" id="nAdd">Añadir cámara</button></div>
+    <div class="nota">El zoom solo se aplica si el navegador lo permite en ese objetivo. Si lo usas, calíbrala con
+    ese mismo zoom: el campo de visión cambia y la calibración deja de valer.</div>`
+   :`<div class="nota">Pulsa «Detectar objetivos». El navegador pedirá permiso de cámara, que hace falta para que
+     dé los nombres de las lentes.</div>`}`;
+  return h;
+}
+
+/* ---------------------------------------------------------- calibración */
+function uiCalibB(){
+  const C=S.calib, o=C.out;
+  let h = `<h2>Calibrar un objetivo</h2>`;
+  if(!S.src || esVivo()){
+    h += `<div class="nota">Apunta a una pared con marcas de altura conocida sobre una misma vertical, con el móvil
+      a plomo, y captura. Cuanto más repartidas en altura, mejor: con menos de cuatro el ajuste no se sostiene.</div>
+      <div class="bt">${esVivo()?'<button class="p" id="cCap">Capturar para calibrar</button>'
+        :'<button class="p" id="cAbr">Abrir la cámara</button>'}</div>`;
+    return h;
+  }
+  h += `<div class="row"><label>Cámara</label><select id="cCam">
+      <option value="">— sin asociar —</option>
+      ${S.camaras.map(c=>`<option value="${c.id}"${c.id===C.camaraId?" selected":""}>${c.nombre}</option>`).join("")}
+    </select></div>
+    <div class="row"><label>Distancia</label><input type="number" step="0.1" id="cD" value="${C.d}"><span class="u">cm</span></div>
+    <div class="row"><label>Altura lente</label><input type="number" step="0.1" id="cH" value="${C.hCam}"><span class="u">cm</span></div>
+    <div class="row"><label>Sensor frontal</label><input type="number" step="0.01" id="cS" value="${C.sensor}" placeholder="obligatorio"><span class="u">°</span></div>
+    <div class="row"><label>Sensor lateral</label><input type="number" step="0.01" id="cSR" value="${C.sensorRoll}" placeholder="opcional"><span class="u">°</span></div>
+    <div class="nota">La altura de la lente sobre el suelo es imprescindible: sin ella la inclinación y la altura de
+    cámara son indistinguibles. La lectura frontal es obligatoria para obtener δ.</div>
+    <h2>Marcas</h2>
+    <table><tr><th>#</th><th>Altura (cm)</th><th>y</th><th>x</th><th></th></tr>
+    ${C.puntos.map((q,i)=>`<tr><td>${i+1}</td>
+      <td><input type="number" step="0.1" class="cHh" data-i="${i}" value="${q.h??""}" style="font:13.5px inherit;padding:6px 8px"></td>
+      <td class="u">${q.y===null?"—":fmt(q.y,0)}</td>
+      <td class="u">${q.x===null||q.x===undefined?"—":fmt(q.x,0)}</td>
+      <td><button class="mini cFij" data-i="${i}">fijar</button></td></tr>`).join("")}
+    </table>
+    <div class="bt"><button class="mini" id="cMas">+ marca</button>
+      <button class="mini" id="cMenos">− marca</button>
+      <button class="p" id="cAjus">Ajustar</button>
+      <button class="mini" id="cOtra">Otra captura</button></div>`;
+  if(o){
+    if(o.err) h += `<div class="ver v-no">${o.err}</div>`;
+    else {
+      const malo=o.rms>0.004*S.src.h;
+      h += `<h2>Resultado</h2>
+      <table>
+        <tr><td>focal relativa</td><td class="n">${fmt(o.fRel,5)}</td></tr>
+        <tr><td>centro óptico</td><td class="n">${fmt(o.y0Rel,5)}</td></tr>
+        <tr><td>inclinación de la toma</td><td class="n">${fmt(o.phi,3)}°</td></tr>
+        <tr><td>desalineación δ</td><td class="n">${o.delta===null?"—":fmt(o.delta,3)+"°"}</td></tr>
+        <tr><td>δρ lateral</td><td class="n">${o.deltaRoll===null||o.deltaRoll===undefined?"—":fmt(o.deltaRoll,3)+"°"}</td></tr>
+        <tr><td>error de ajuste</td><td class="n">${fmt(o.rms,2)} px</td></tr>
+      </table>
+      <div class="ver ${malo?"v-na":"v-ok"}">${malo?"Ajuste pobre: revisa alturas, distancia y nitidez":"Ajuste correcto"}</div>
+      ${o.sosp?`<div class="ver v-na">La marca ${o.sosp.i+1} desentona: sin ella el error baja de ${
+        fmt(o.sosp.base,2)} a ${fmt(o.sosp.rms,2)} px</div>
+        <div class="bt"><button class="mini" id="cQui" data-i="${C.puntos.indexOf(o.sosp.punto)}">Quitarla y reajustar</button></div>`:""}
+      ${o.delta===null?`<div class="ver v-no">Falta la lectura del sensor frontal: sin ella no hay δ.</div>`:""}
+      ${(o.delta!==null&&Math.abs(o.delta)>DELTA_MAX)?`<div class="ver v-no">δ = ${fmt(o.delta,2)}° no es creíble:
+        la desalineación mecánica es de décimas de grado. Comprueba que la lectura sea la de esta toma.</div>`:""}
+      <div class="bt"><button class="g" id="cGua">${
+        (C.camaraId && perfilDeCamara(C.camaraId)) ? "Guardar la calibración (sustituye la anterior)"
+                                                   : "Guardar la calibración"}</button></div>`;
+    }
+  }
+  return h;
+}
+
+/* ------------------------------------------------------------- ensayos */
+function uiEnsayos(){
+  const L=ensayosLee(), e=S.edEns;
+  let h = `<h2>Configuraciones</h2>`;
+  h += L.length ? `<table><tr><th>Nombre</th><th>Altura</th><th></th></tr>
+    ${L.map(q=>`<tr><td>${q.nombre}${q.cat?' <span style="color:var(--dim)">'+q.cat+'</span>':''}</td>
+      <td class="n">${q.hNom?fmtEtiq(+q.hNom)+" m ±"+fmt(+q.tol,0)+"%":"—"}</td>
+      <td><button class="mini ed" data-id="${q.id}">editar</button></td></tr>`).join("")}</table>`
+    : `<div class="nota">Ninguna todavía. Una configuración guarda lo que define el control de un artículo o de una
+       familia: altura declarada, tolerancia y las líneas que deben verse.</div>`;
+  h += `<div class="bt"><button class="p" id="enN">Nueva</button></div>`;
+  if(e){
+    h += `<h2>${e.id?"Editar":"Nueva"}</h2>
+    <div class="row"><label>Nombre</label><input type="text" id="edN" value="${(e.nombre||"").replace(/"/g,"&quot;")}"></div>
+    <div class="row"><label>Categoría</label><input type="text" id="edC" value="${(e.cat||"").replace(/"/g,"&quot;")}" placeholder="F1…F4, T, P"></div>
+    <div class="row"><label>Altura declarada</label><input type="number" step="0.1" id="edH" value="${e.hNom??""}" placeholder="vacío = sin criterio"><span class="u">m</span></div>
+    <div class="row"><label>Tolerancia</label><input type="number" step="1" id="edT" value="${e.tol??20}"><span class="u">%</span></div>
+    <div class="row"><label>Oblicuas</label><input type="text" id="edA" value="${(e.angulos||"").replace(/"/g,"&quot;")}" placeholder="15, 30"><span class="u">°</span></div>
+    <div class="row"><label>Alturas</label><input type="text" id="edL" value="${(e.alturas||"").replace(/"/g,"&quot;")}" placeholder="20, 30"><span class="u">m</span></div>
+    <div class="row"><label>Distancia</label><input type="number" step="0.1" id="edD" value="${e.d??""}" placeholder="vacío = sugerida"><span class="u">m</span></div>
+    <div class="bt"><button class="g" id="edGua">Guardar</button>
+      ${e.id?'<button id="edBor">Borrar</button>':""}
+      <button id="edCan">Cancelar</button></div>
+    <div class="nota">Deja la altura declarada vacía para una familia que solo controla líneas, como voladores. Deja
+    la distancia vacía y se sugerirá a partir de la altura, con un ángulo vertical de ${ANG_OPT}°.</div>`;
+  }
+  return h;
+}
+
+/* --------------------------------------------------------------- datos */
+function uiDatos(){
+  return `<h2>Trasladar datos</h2>
+  <div class="nota">Perfiles, cámaras y configuraciones viven en el almacén de este navegador: no pasan solos a otro
+  aparato. Expórtalos y tráelos donde haga falta. Al importar no se borra nada: si algo coincide, se pregunta.</div>
+  <div class="bt"><button id="dExp">Exportar</button><button id="dExpF">Descargar</button></div>
+  <div class="bt"><button id="dImp">Importar del texto</button><button id="dImpF">Importar de archivo</button></div>
+  <input type="file" id="dFile" accept=".json,application/json" style="display:none">
+  <textarea id="dTxt" placeholder="Aquí sale el texto al exportar; pega aquí el recibido y pulsa Importar"></textarea>
+  <div class="nota">Ahora mismo: ${S.perfiles.length} perfiles, ${S.camaras.length} cámaras,
+  ${ensayosLee().length} configuraciones.</div>`;
+}
+
+function ataAjustes(){
+  const on=(id,ev,fn)=>{ const el=$("#"+id); if(el) el.addEventListener(ev,fn); };
+  $$(".sub").forEach(el=>el.addEventListener("click",e=>{ S.sub=e.target.dataset.k; pinta(); }));
+
+  /* cámaras */
+  on("det","click",async()=>{
+    try{ const st=await navigator.mediaDevices.getUserMedia({video:true}); st.getTracks().forEach(t=>t.stop()); }catch(e){}
+    try{ S.cams=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==="videoinput"); }catch(e){ S.cams=[]; }
+    pinta();
+  });
+  on("nAdd","click",()=>{
+    const nom=($("#nNom").value||"").trim(); if(!nom){ alert("Ponle un nombre."); return; }
+    const z=$("#nZoom").value;
+    S.camaras.push({id:"cm"+Date.now(), nombre:nom, tipo:"disp",
+      deviceId:$("#nDev").value, zoom:z===""?null:+z});
+    guarda(); pinta();
+  });
+  $$(".bor").forEach(el=>el.addEventListener("click",e=>{
+    const c=camara(e.target.dataset.id); if(!c) return;
+    const pf=perfilDeCamara(c.id);
+    if(!confirm("¿Borrar la cámara «"+c.nombre+"»?\n\n"
+      +(pf?"Su calibración NO se borra: el perfil «"+pf.name+"» se queda, solo pierde la asociación.":"")))
+      return;
+    S.camaras=S.camaras.filter(q=>q.id!==c.id);
+    if(S.camaraId===c.id) S.camaraId="";
+    guarda(); pinta();
+  }));
+
+  /* calibración */
+  on("cAbr","click",()=>{ S.vista="medir"; pinta(); setTimeout(()=>abreCamara(S.camaraId),50); });
+  on("cCap","click",()=>{
+    const v=S.src.el, c=document.createElement("canvas");
+    c.width=S.src.w; c.height=S.src.h; c.getContext("2d").drawImage(v,0,0);
+    const t=tiltLeido(), r=rollLeido();
+    S.calib.sensor = t===null?"":+t.toFixed(2);
+    S.calib.sensorRoll = r===null?"":+r.toFixed(2);
+    S.calib.camaraId = S.camaraId||"";
+    if(!S.calib.puntos.length) S.calib.puntos=[{h:null,y:null,x:null},{h:null,y:null,x:null},
+      {h:null,y:null,x:null},{h:null,y:null,x:null}];
+    cierraCamara();
+    S.src={kind:"img", el:c, w:c.width, h:c.height};
+    S.calib.out=null; encaja(); pinta();
+  });
+  on("cOtra","click",()=>{ S.src=null; S.calib.out=null; pinta(); });
+  const numC=(id,k)=>on(id,"change",e=>{ S.calib[k]= e.target.value===""?"":+e.target.value; pinta(); });
+  numC("cD","d"); numC("cH","hCam"); numC("cS","sensor"); numC("cSR","sensorRoll");
+  on("cCam","change",e=>{ S.calib.camaraId=e.target.value; pinta(); });
+  $$(".cHh").forEach(el=>el.addEventListener("change",e=>{
+    S.calib.puntos[+e.target.dataset.i].h = e.target.value===""?null:+e.target.value; }));
+  $$(".cFij").forEach(el=>el.addEventListener("click",e=>{
+    if(!dentro()) return;
+    const c=centroImg(), q=S.calib.puntos[+e.target.dataset.i];
+    q.y=c.y; q.x=c.x; pinta();
+  }));
+  on("cMas","click",()=>{ S.calib.puntos.push({h:null,y:null,x:null}); pinta(); });
+  on("cMenos","click",()=>{ if(S.calib.puntos.length>2){ S.calib.puntos.pop(); pinta(); } });
+  on("cAjus","click",()=>{ S.calib.out=ajusta(); pinta(); });
+  on("cQui","click",e=>{
+    const q=S.calib.puntos[+e.target.dataset.i]; if(!q) return;
+    if(!confirm("¿Quitar esa marca del ajuste?\n\nSe borra su fila y su columna, no la altura escrita.")) return;
+    q.y=null; q.x=null; S.calib.out=ajusta(); pinta();
+  });
+  on("cGua","click",guardaCalib);
+
+  /* ensayos */
+  $$(".ed").forEach(el=>el.addEventListener("click",e=>{
+    S.edEns=Object.assign({},ensayoPorId(e.target.dataset.id)); pinta(); }));
+  on("enN","click",()=>{ S.edEns={id:"", nombre:"", cat:"", hNom:null, tol:20,
+    angulos:"", alturas:"", d:null}; pinta(); });
+  on("edCan","click",()=>{ S.edEns=null; pinta(); });
+  on("edGua","click",()=>{
+    const v=id=>$("#"+id)?$("#"+id).value:"";
+    const nom=(v("edN")||"").trim(); if(!nom){ alert("Ponle un nombre."); return; }
+    const e={ id:S.edEns.id||("e"+Date.now()), nombre:nom, cat:v("edC"),
+      hNom: v("edH")===""?null:+v("edH"), tol: v("edT")===""?20:+v("edT"),
+      angulos:v("edA"), alturas:v("edL"), d: v("edD")===""?null:+v("edD"), nota:"" };
+    const L=ensayosLee(); const i=L.findIndex(q=>q.id===e.id);
+    if(i<0) L.push(e); else L[i]=e;
+    ensayosGuarda(L); S.edEns=null; pinta();
+  });
+  on("edBor","click",()=>{
+    const e=S.edEns; if(!e||!e.id) return;
+    if(!confirm("¿Borrar la configuración «"+e.nombre+"»?\n\nNo afecta a ninguna medida ya hecha.")) return;
+    ensayosGuarda(ensayosLee().filter(q=>q.id!==e.id));
+    if(S.med.ensayoId===e.id){ S.med.ensayoId=""; S.med.ensayoNom=""; guarda(); }
+    S.edEns=null; pinta();
+  });
+
+  /* datos */
+  on("dExp","click",()=>{ const t=$("#dTxt"); t.value=exportaDatos(S); t.select();
+    navigator.clipboard?.writeText(t.value); });
+  on("dExpF","click",()=>{ const t=$("#dTxt"); t.value=exportaDatos(S);
+    descargaTexto(t.value, nombreExport()); });
+  on("dImpF","click",()=>{ const f=$("#dFile"); if(f) f.click(); });
+  on("dFile","change",e=>{
+    const f=e.target.files&&e.target.files[0]; if(!f) return;
+    const fr=new FileReader(); fr.onload=()=>{ $("#dTxt").value=fr.result; importaAqui(); };
+    fr.readAsText(f); e.target.value="";
+  });
+  on("dImp","click",importaAqui);
+}
+
+/* Guardar la calibración. Misma regla que en la versión completa: calibrar
+   un objetivo que ya tenía calibración la SUSTITUYE, preguntando antes, en
+   vez de dejar dos perfiles de la misma cámara de los que el modelo tomaría
+   el primero que encontrase, que es el viejo. */
+function guardaCalib(){
+  const o=S.calib.out; if(!o||o.err) return;
+  const previo = S.calib.camaraId ? perfilDeCamara(S.calib.camaraId) : null;
+  let sustituir=false;
+  if(previo) sustituir = confirm("«"+nombreCamara(S.calib.camaraId)+"» ya tiene calibración"
+    +(previo.datos?" del "+new Date(previo.datos.fecha).toLocaleDateString("es-ES"):"")+".\n\n"
+    +"Aceptar: sustituirla.\nCancelar: conservar las dos.");
+  if(o.delta===null && !confirm("Sin lectura del sensor frontal se guardará con δ = 0.\n\n¿Continuar?")) return;
+  if(o.delta!==null && Math.abs(o.delta)>DELTA_MAX
+     && !confirm("δ = "+fmt(o.delta,2)+"° no es creíble.\n\n¿Guardar de todas formas?")) return;
+  let name;
+  if(sustituir) name=previo.name;
+  else {
+    name = prompt("Nombre de esta calibración:",
+      (S.calib.camaraId?nombreCamara(S.calib.camaraId):"cámara")+" · en vivo "+S.src.w+"×"+S.src.h);
+    if(!name) return;
+  }
+  const d = {fRel:o.fRel, y0Rel:o.y0Rel, delta:o.delta===null?0:o.delta,
+    deltaRoll:(o.deltaRoll===null||o.deltaRoll===undefined)?0:+o.deltaRoll.toFixed(3), uF:0.40,
+    w:S.src.w, h:S.src.h, camaraId:S.calib.camaraId||"", uso:"vivo",
+    datos:registroCalib(o),
+    note:"Ajuste de "+o.n+" puntos, rms "+fmt(o.rms,2)+" px, "+S.src.w+"×"+S.src.h+" px (versión básica)"};
+  let id;
+  if(sustituir){ id=previo.id; Object.assign(previo, d, {id, name}); }
+  else { id="p"+Date.now(); S.perfiles.push(Object.assign({id,name}, d)); }
+  S.perfilId=id; guarda();
+  alert(sustituir?"Calibración sustituida.":"Calibración guardada.");
+  S.src=null; S.calib.out=null; pinta();
+}
+
+/* Importación: nunca borra. Ante coincidencia se pregunta, y por omisión se
+   conserva lo de aquí y lo de fuera entra aparte. */
+function importaAqui(){
+  const b=leeBundle($("#dTxt").value);
+  if(b.err){ alert(b.err); return; }
+  const linea=[];
+  if(b.perfiles.length) linea.push(b.perfiles.length+" perfiles");
+  if(b.camaras.length)  linea.push(b.camaras.length+" cámaras");
+  if(b.ensayos.length)  linea.push(b.ensayos.length+" configuraciones");
+  const choque = b.perfiles.some(q=>S.perfiles.some(p=>p.id===q.id))
+              || b.camaras.some(q=>S.camaras.some(c=>c.id===q.id))
+              || b.ensayos.some(q=>ensayosLee().some(e=>e.id===q.id));
+  let modo="conservar";
+  if(choque) modo = confirm("El archivo trae "+linea.join(", ")+".\n\nAlgunos coinciden con los tuyos.\n\n"
+    +"Aceptar: SUSTITUIR los que coincidan.\nCancelar: conservar los tuyos y añadir los otros aparte.")
+    ? "sustituir" : "conservar";
+  else if(!confirm("¿Importar "+linea.join(", ")+"?")) return;
+  const r=aplicaBundle(S,b,{modo});
+  guarda(); pinta();
+  alert(resumenImport(r));
 }
 
 /* ------------------------------------------------------------ informe */
@@ -677,6 +1030,8 @@ function informeEnsayo(){
 
 /* ------------------------------------------------------------ arranque */
 addEventListener("resize",()=>{ mide(); if(S.src) encaja(); dibuja(); });
+$("#tbMed").addEventListener("click",()=>{ S.vista="medir"; pinta(); });
+$("#tbAju").addEventListener("click",()=>{ S.vista="ajustes"; S.edEns=null; pinta(); });
 mide(); pinta(); dibuja();
 setInterval(()=>{ if(!esVivo()) pintaNivel(); },250);
 if(!SENS.on) activaSensores();
