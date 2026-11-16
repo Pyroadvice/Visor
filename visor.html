@@ -1594,6 +1594,49 @@ function uiCalib(){
   return h;
 }
 
+function informeCalib(p){
+  if(!p||!p.datos) return "Este perfil no guarda datos de calibración.";
+  const D=p.datos, L=[];
+  L.push("# Informe de calibración de cámara","",
+    "| | |","|---|---|",
+    "| Perfil | "+p.name+" |",
+    "| Uso | "+USOS[p.uso||"foto"]+" |",
+    "| Cámara | "+(p.camaraId?nombreCamara(p.camaraId):"sin asociar")+" |",
+    "| Fecha de la calibración | "+new Date(D.fecha).toISOString().slice(0,19).replace("T"," ")+" |",
+    "| Fotograma | "+p.w+"×"+p.h+" px |","",
+    "## Condiciones del ensayo","",
+    "| | |","|---|---|",
+    "| Distancia al plano de las marcas | "+fmt(D.d,1)+" cm |",
+    "| Altura de la lente sobre el suelo | "+fmt(D.hCam,1)+" cm |",
+    "| Lectura del inclinómetro en la toma | "+fmt(D.sensor,2)+"° |",
+    "| Tipo de ajuste | "+(D.tipo==="phi"?"solo inclinación":"óptica completa")+" |","",
+    "## Datos y desajustes","",
+    "| Marca | Altura (cm) | Fila en la imagen (px) | Desajuste (px) |","|---|---|---|---|");
+  D.puntos.forEach((q,i)=>L.push("| "+(i+1)+" | "+fmt(q.h,1)+" | "+fmt(q.y,1)+" | "+fmt(D.res[i],1)+" |"));
+  L.push("","## Resultado","",
+    "| | |","|---|---|",
+    "| Distancia focal (f) | "+fmt(D.f,1)+" px |",
+    "| Focal relativa al fotograma | "+fmt(p.fRel,5)+" |",
+    "| Centro óptico (y₀) | "+fmt(D.y0,1)+" px ("+fmt(p.y0Rel,5)+") |",
+    "| Inclinación resuelta de la toma | "+fmt(D.phi,3)+"° |",
+    "| Desfase del sensor (δ) | "+fmt(p.delta,3)+"° |",
+    "| Error de ajuste (rms) | "+fmt(D.rms,2)+" px |",
+    "| Factor de zoom deducido | "+(zoomDe(p)===null?"—":"×"+fmt(zoomDe(p),2))+" |","",
+    "## Modelo","",
+    "r = tan( arctan( (y₀ − y) / f ) + φ );   altura = (r_punto − r_origen) · d","",
+    "siendo y la fila de la imagen, f la distancia focal en píxeles, y₀ el centro óptico,",
+    "φ la inclinación de la toma y d la distancia de observación.","",
+    "## Alcance y limitaciones","",
+    "1. Calibración interna. **No es un certificado trazable a un patrón nacional.**",
+    "2. El perfil vale para **esta cámara en este uso y con este tamaño de fotograma**. Aplicarlo a otro modo de",
+    "   captura introduce un error de escala constante que no se manifiesta como anomalía.",
+    "3. Las alturas de las marcas se toman como verdad absoluta: su error se traslada íntegro al resultado.",
+    "4. Con todas las marcas en una sola vertical y a una sola distancia, focal, centro óptico e inclinación están",
+    "   correlacionados. Un error de ajuste bajo no garantiza por sí solo que cada valor sea correcto; la",
+    "   comprobación es repetir sobre otra toma.","");
+  return L.join("\n");
+}
+
 function uiAjustes(){
   const p=perfil();
   if(!p) return `<div class="verdict v-no" style="text-align:left;font-weight:500">
@@ -1619,6 +1662,31 @@ function uiAjustes(){
     <div class="kv"><span>error de la focal</span><b>${fmt(p.uF,2)} %</b></div>
   </div>
   <div class="note">${p.note||""}</div>
+  ${p.datos?`
+  <h3>Datos de la calibración</h3>
+  <div class="card">
+    <div class="kv"><span>fecha</span><b>${new Date(p.datos.fecha).toLocaleString("es-ES")}</b></div>
+    <div class="kv"><span>distancia a las marcas</span><b>${fmt(p.datos.d,1)} cm</b></div>
+    <div class="kv"><span>altura de la lente</span><b>${fmt(p.datos.hCam,1)} cm</b></div>
+    <div class="kv"><span>lectura del sensor</span><b>${fmt(p.datos.sensor,2)}°</b></div>
+    <div class="kv"><span>inclinación resuelta</span><b>${fmt(p.datos.phi,3)}°</b></div>
+    <div class="kv"><span>error de ajuste</span><b>${fmt(p.datos.rms,2)} px</b></div>
+  </div>
+  <table><tr><th>Marca</th><th>Altura (cm)</th><th>Fila (px)</th><th>Desajuste (px)</th></tr>
+    ${p.datos.puntos.map((q,i)=>`<tr><td>${i+1}</td><td>${fmt(q.h,1)}</td><td>${fmt(q.y,1)}</td>
+      <td style="color:${Math.abs(p.datos.res[i]||0)>0.004*p.h?"var(--warn)":"var(--txt)"}">${fmt(p.datos.res[i],1)}</td></tr>`).join("")}
+  </table>
+  <div class="note">Si una medida sale rara, mira aquí: un desajuste grande en una sola marca suele ser una altura
+  mal escrita o la cruz mal puesta en esa marca concreta.</div>
+  <div class="btns">
+    <button class="p" id="aReabrir">Reabrir para corregir</button>
+    <button id="aInforme">Informe de calibración</button>
+  </div>
+  <textarea id="aInfTxt" readonly placeholder="El informe aparece aquí"
+    style="width:100%;min-height:90px;background:#0d1117;color:var(--txt);border:1px solid var(--line);
+    border-radius:6px;padding:8px;font:11.5px ui-monospace,monospace"></textarea>`
+  :`<div class="note" style="color:var(--warn)">Este perfil no guarda sus datos de calibración: se creó antes de
+    que se registraran, o se importó. No se puede comprobar ni corregir; para auditarlo habría que recalibrar.</div>`}
   <div class="btns"><button id="aDel">Borrar este perfil</button></div>
   <div class="btns">
     <button id="aDelTodo">Borrar todos los perfiles</button>
@@ -1819,6 +1887,14 @@ function enlaza(){
     const id="p"+Date.now();
     S.perfiles.push({id,name,fRel:o.fRel,y0Rel:o.y0Rel,delta:o.delta,uF:0.40,
       w:S.src.w, h:S.src.h, camaraId:S.calib.camaraId||"", uso:S.calib.uso||"foto",
+      /* Se guarda el expediente completo, no solo el resultado. Sin los datos
+         de partida una calibración no se puede comprobar ni corregir, y ante
+         un organismo notificado no se sostiene. */
+      datos:{ fecha:new Date().toISOString(), d:+S.calib.d, hCam:+S.calib.hCam,
+              sensor:+S.calib.sensor, capId:S.calib.capId||"", tipo:S.calib.tipo,
+              puntos:S.calib.puntos.filter(q=>q.y!==null&&isFinite(+q.h))
+                     .map(q=>({h:+q.h, y:+q.y})),
+              f:o.f, y0:o.y0, phi:o.phi, rms:o.rms, res:o.res.slice() },
       note:"Ajuste de "+o.n+" puntos, rms "+fmt(o.rms,2)+" px, "+S.src.w+"×"+S.src.h+" px"});
     S.perfilId=id; guarda(); pinta();
     alert(S.calib.camaraId
@@ -1864,6 +1940,21 @@ function enlaza(){
     alert("Hecho. Todo vuelve al estado inicial.");
   });
   num("aUpx","upx",S.med); num("aUphi","uphi",S.med);
+  on("aReabrir","click",async()=>{
+    const p=perfil(); if(!p||!p.datos) return;
+    const D=p.datos;
+    S.calib.d=D.d; S.calib.hCam=D.hCam; S.calib.sensor=D.sensor;
+    S.calib.camaraId=p.camaraId||""; S.calib.uso=p.uso||"foto"; S.calib.tipo=D.tipo||"full";
+    S.calib.puntos=D.puntos.map(q=>({h:q.h, y:q.y}));
+    S.calib.capId=D.capId||""; S.calib.origen=D.capId?"captura":"archivo";
+    S.calib.out=null;
+    S.modo="calib"; sincTabs();
+    if(D.capId && S.capturas.some(c=>c.id===D.capId)) await usaCaptura(D.capId);
+    else { S.src=null; $("#hint").classList.remove("hide"); pinta();
+      alert("Los números están cargados y puedes corregirlos y volver a ajustar.\n\nLa imagen original ya no está guardada, así que para recolocar alguna cruz tendrías que volver a cargarla."); }
+    pinta();});
+  on("aInforme","click",()=>{ const t=$("#aInfTxt"); if(t){ t.value=informeCalib(perfil()); t.select();
+    navigator.clipboard?.writeText(t.value); } });
   on("aBase","click",()=>{
     if(!confirm("Añade el perfil base de fábrica.\n\nEstá medido sobre foto de 12 MP de un Galaxy S25+: solo sirve\npara esa cámara en ese modo. Para cualquier otra, calibra.\n\n¿Continuar?")) return;
     const b=Object.assign({},PERFIL_BASE,{id:"base"+Date.now()});
