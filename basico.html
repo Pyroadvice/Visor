@@ -77,6 +77,9 @@ textarea{width:100%;min-height:80px;background:#0d1117;color:var(--txt);border:1
   <div id="pan"></div>
 </div>
 <video id="vid" playsinline muted style="display:none"></video>
+<video id="vfile" playsinline muted style="display:none"></video>
+<input type="file" id="fImg" accept="image/*" style="display:none">
+<input type="file" id="fVid" accept="video/*" style="display:none">
 
 <script src="modelo.js"></script>
 <script src="ensayos.js"></script>
@@ -283,6 +286,73 @@ function congela(){
   guarda(); pinta();
 }
 
+/* ------------------------------------------------- imagen y vídeo de archivo
+
+   Una foto o un vídeo que manda un tercero vienen de una cámara que no es
+   esta, así que no hay inclinómetro que valga: el perfil se elige a mano y
+   los dos ángulos de la toma se escriben. Es la diferencia de fondo entre
+   medir en vivo y medir sobre un archivo, y por eso la interfaz cambia. */
+const esArchivo = () => !!(S.src && S.src.origen==="archivo");
+const esVideo   = () => !!(S.src && S.src.kind==="video");
+const usoFuente = () => esArchivo() ? (esVideo()?"video":"foto") : "vivo";
+const perfilesDe = u => S.perfiles.filter(q=>(q.uso||"foto")===u);
+
+function cargaImagen(file, aCalibrar){
+  const img=new Image();
+  img.onload=()=>{
+    cierraCamara(); cierraVideo();
+    S.src={kind:"img", el:img, w:img.naturalWidth, h:img.naturalHeight, origen:"archivo"};
+    tras(aCalibrar, "foto");
+  };
+  img.onerror=()=>alert("No he podido abrir esa imagen.");
+  img.src=URL.createObjectURL(file);
+}
+function cargaVideo(file, aCalibrar){
+  const v=$("#vfile");
+  v.onloadeddata=()=>{
+    cierraCamara();
+    S.src={kind:"video", el:v, w:v.videoWidth, h:v.videoHeight, origen:"archivo"};
+    v.currentTime=0;
+    const bucle=()=>{ if(esVideo()){ dibuja(); rafV=requestAnimationFrame(bucle); } };
+    cancelAnimationFrame(rafV); bucle();
+    tras(aCalibrar, "video");
+  };
+  v.onerror=()=>alert("No he podido abrir ese vídeo.");
+  v.src=URL.createObjectURL(file);
+  v.load();
+}
+let rafV=0;
+function cierraVideo(){
+  cancelAnimationFrame(rafV);
+  const v=$("#vfile"); if(v && v.src){ try{ URL.revokeObjectURL(v.src); }catch(e){} v.removeAttribute("src"); v.load(); }
+}
+function tras(aCalibrar, uso){
+  limpiaMarcas(); encaja();
+  S.med.phiManual=""; S.med.rollManual="";
+  if(aCalibrar){
+    S.calib.uso=uso; S.calib.camaraId=""; S.calib.out=null;
+    S.calib.sensor=""; S.calib.sensorRoll="";
+    if(!S.calib.puntos.length) S.calib.puntos=[{h:null,y:null,x:null},{h:null,y:null,x:null},
+      {h:null,y:null,x:null},{h:null,y:null,x:null}];
+    S.vista="ajustes"; S.sub="calib";
+  } else {
+    S.vista="medir";
+    const c=perfilesDe(uso); if(c.length) S.perfilId=c[0].id;
+  }
+  guarda(); pinta();
+}
+/* Congelar un fotograma del vídeo: medir sobre una imagen fija evita que la
+   marca se vaya al avanzar la reproducción. */
+function congelaVideo(){
+  if(!esVideo()) return;
+  const c=document.createElement("canvas");
+  c.width=S.src.w; c.height=S.src.h;
+  c.getContext("2d").drawImage(S.src.el,0,0);
+  cierraVideo();
+  S.src={kind:"img", el:c, w:c.width, h:c.height, origen:"archivo"};
+  pinta();
+}
+
 /* ------------------------------------------------------------- lienzo */
 const cv=$("#cv"); const ctx=cv.getContext("2d");
 let W=0,H=0;
@@ -451,13 +521,39 @@ function pinta(){
   let h="";
   const p=perfil(), pA=perfilDeCamara(S.camaraId);
 
-  /* --- cámara --- */
-  h += `<h2>Cámara</h2>`;
+  /* --- fuente --- */
+  h += `<h2>Imagen</h2>
+  <div class="bt">
+    ${esVivo()?'<button id="bFre">Congelar</button><button id="bCie">Cerrar</button>'
+              :'<button class="p" id="bAbr">Cámara</button>'}
+    <button id="bImg">Foto</button><button id="bVid">Vídeo</button>
+  </div>
+  ${esVideo()?`<div class="row"><label>Fotograma</label>
+    <input type="range" id="vPos" min="0" max="${($("#vfile").duration||0).toFixed(2)}" step="0.04"
+      value="${($("#vfile").currentTime||0).toFixed(2)}"></div>
+    <div class="bt"><button class="p" id="vFre">Congelar este fotograma</button></div>`:""}`;
+  if(esArchivo()){
+    const cand=perfilesDe(usoFuente());
+    h += `<div class="row"><label>Perfil</label><select id="pSel">
+      ${cand.length?cand.map(q=>`<option value="${q.id}"${q.id===S.perfilId?" selected":""}>${q.name}</option>`).join("")
+       :'<option value="">— ninguno calibrado para '+USOS[usoFuente()]+' —</option>'}
+    </select></div>
+    <div class="row"><label>Inclin. frontal</label><input type="number" step="0.01" id="iPhi"
+      value="${S.med.phiManual??""}" placeholder="ángulo de la toma"><span class="u">°</span></div>
+    <div class="row"><label>Inclin. lateral</label><input type="number" step="0.01" id="iRoll"
+      value="${S.med.rollManual??""}" placeholder="opcional"><span class="u">°</span></div>
+    <div class="nota">La imagen viene de otra cámara: elige el perfil calibrado para ella y escribe los ángulos
+    que tuviera el aparato al disparar. Sin inclinación frontal se supone a plomo.</div>
+    ${cand.length?"":`<div class="ver v-no">No hay ningún perfil para ${USOS[usoFuente()]}. Calíbralo en
+      Ajustes · Calibrar cargando una imagen de esa misma cámara.</div>`}`;
+  }
+  if(!esArchivo()) h += `<h2>Cámara</h2>`;
   if(!S.perfiles.length && !S.camaras.length)
     h += `<div class="nota">Sin cámaras ni calibraciones. Puedes definirlas y calibrarlas aquí, en Ajustes, o
       traerlas de otro aparato desde Ajustes · Datos. También existe la <a href="visor.html"
       style="color:var(--acc)">versión completa</a>, con análisis de foto y vídeo.</div>`;
-  if(!S.camaras.length){
+  if(esArchivo()){ /* el bloque de cámara no aplica a una imagen de archivo */ }
+  else if(!S.camaras.length){
     h += `<div class="ver v-no">No hay ninguna cámara definida.</div>
     <div class="nota">Las cámaras y sus calibraciones se crean en la versión completa. Allí se define la cámara,
     se captura una pared con marcas de altura conocida y se calibra. Aquí solo se elige y se mide.</div>
@@ -555,7 +651,14 @@ function ata(){
   on("bFS","click",()=>fsAlterna($("#lienzo")));
   on("cam","change",async e=>{ cierraCamara(); S.camaraId=e.target.value; guarda();
     const a=perfilDeCamara(S.camaraId); if(a){ S.perfilId=a.id; guarda(); } await abreCamara(S.camaraId); });
-  on("bAbr","click",()=>abreCamara(S.camaraId));
+  on("bAbr","click",()=>{ cierraVideo(); abreCamara(S.camaraId); });
+  on("bImg","click",()=>{ S.pendCal=false; $("#fImg").click(); });
+  on("bVid","click",()=>{ S.pendCal=false; $("#fVid").click(); });
+  on("vPos","input",e=>{ const v=$("#vfile"); v.currentTime=+e.target.value; });
+  on("vFre","click",congelaVideo);
+  on("pSel","change",e=>{ S.perfilId=e.target.value; guarda(); pinta(); });
+  on("iPhi","change",e=>{ S.med.phiManual=e.target.value===""?"":+e.target.value; guarda(); pinta(); });
+  on("iRoll","change",e=>{ S.med.rollManual=e.target.value===""?"":+e.target.value; guarda(); pinta(); });
   on("bFre","click",congela);
   on("bCie","click",()=>{ cierraCamara(); S.src=null; pinta(); });
   on("iD","change",e=>{ S.med.d=+e.target.value||0; guarda(); pinta(); });
@@ -674,22 +777,31 @@ function uiCalibB(){
   const C=S.calib, o=C.out;
   let h = `<h2>Calibrar un objetivo</h2>`;
   if(!S.src || esVivo()){
-    h += `<div class="nota">Apunta a una pared con marcas de altura conocida sobre una misma vertical, con el móvil
-      a plomo, y captura. Cuanto más repartidas en altura, mejor: con menos de cuatro el ajuste no se sostiene.</div>
-      <div class="bt">${esVivo()?'<button class="p" id="cCap">Capturar para calibrar</button>'
-        :'<button class="p" id="cAbr">Abrir la cámara</button>'}</div>`;
+    h += `<div class="nota">Hacen falta marcas de altura conocida sobre una misma vertical, bien repartidas: con
+      menos de cuatro el ajuste no se sostiene.
+      <br><br><b>Cámara del móvil:</b> apunta a la pared con el móvil a plomo y captura; las lecturas del
+      inclinómetro se guardan solas y de ahí salen δ y δρ.
+      <br><b>Cámara ajena:</b> carga una foto o un vídeo tomados por ella a una pared así. No hay inclinómetro que
+      valga, de modo que el perfil sale con δ = 0 y el ángulo de cada toma se escribe al medir.</div>
+      <div class="bt">${esVivo()?'<button class="p" id="cCap">Capturar con la cámara</button>'
+        :'<button class="p" id="cAbr">Abrir la cámara</button>'}</div>
+      <div class="bt"><button id="cImg">Cargar foto</button><button id="cVid">Cargar vídeo</button></div>`;
     return h;
   }
-  h += `<div class="row"><label>Cámara</label><select id="cCam">
+  const aj = esArchivo();
+  h += `<div class="nota">Calibrando <b>${aj?("una cámara ajena · "+USOS[C.uso||"foto"]):"la cámara del móvil"}</b>
+    · fotograma ${S.src.w}×${S.src.h} px</div>
+  ${aj?"":`<div class="row"><label>Cámara</label><select id="cCam">
       <option value="">— sin asociar —</option>
       ${S.camaras.map(c=>`<option value="${c.id}"${c.id===C.camaraId?" selected":""}>${c.nombre}</option>`).join("")}
-    </select></div>
+    </select></div>`}
     <div class="row"><label>Distancia</label><input type="number" step="0.1" id="cD" value="${C.d}"><span class="u">cm</span></div>
     <div class="row"><label>Altura lente</label><input type="number" step="0.1" id="cH" value="${C.hCam}"><span class="u">cm</span></div>
-    <div class="row"><label>Sensor frontal</label><input type="number" step="0.01" id="cS" value="${C.sensor}" placeholder="obligatorio"><span class="u">°</span></div>
-    <div class="row"><label>Sensor lateral</label><input type="number" step="0.01" id="cSR" value="${C.sensorRoll}" placeholder="opcional"><span class="u">°</span></div>
+    ${aj?"":`<div class="row"><label>Sensor frontal</label><input type="number" step="0.01" id="cS" value="${C.sensor}" placeholder="obligatorio"><span class="u">°</span></div>
+    <div class="row"><label>Sensor lateral</label><input type="number" step="0.01" id="cSR" value="${C.sensorRoll}" placeholder="opcional"><span class="u">°</span></div>`}
     <div class="nota">La altura de la lente sobre el suelo es imprescindible: sin ella la inclinación y la altura de
-    cámara son indistinguibles. La lectura frontal es obligatoria para obtener δ.</div>
+    cámara son indistinguibles.${aj?" De una cámara ajena no hay lecturas de inclinómetro, así que δ no se mide: el perfil guarda la óptica, que es lo que importa, y el ángulo de la toma se escribe al medir."
+      :" La lectura frontal es obligatoria para obtener δ."}</div>
     <h2>Marcas</h2>
     <table><tr><th>#</th><th>Altura (cm)</th><th>y</th><th>x</th><th></th></tr>
     ${C.puntos.map((q,i)=>`<tr><td>${i+1}</td>
@@ -719,12 +831,13 @@ function uiCalibB(){
       ${o.sosp?`<div class="ver v-na">La marca ${o.sosp.i+1} desentona: sin ella el error baja de ${
         fmt(o.sosp.base,2)} a ${fmt(o.sosp.rms,2)} px</div>
         <div class="bt"><button class="mini" id="cQui" data-i="${C.puntos.indexOf(o.sosp.punto)}">Quitarla y reajustar</button></div>`:""}
-      ${o.delta===null?`<div class="ver v-no">Falta la lectura del sensor frontal: sin ella no hay δ.</div>`:""}
+      ${(o.delta===null&&!aj)?`<div class="ver v-no">Falta la lectura del sensor frontal: sin ella no hay δ.</div>`:""}
       ${(o.delta!==null&&Math.abs(o.delta)>DELTA_MAX)?`<div class="ver v-no">δ = ${fmt(o.delta,2)}° no es creíble:
         la desalineación mecánica es de décimas de grado. Comprueba que la lectura sea la de esta toma.</div>`:""}
       <div class="bt"><button class="g" id="cGua">${
-        (C.camaraId && perfilDeCamara(C.camaraId)) ? "Guardar la calibración (sustituye la anterior)"
-                                                   : "Guardar la calibración"}</button></div>`;
+        aj ? "Guardar perfil nuevo"
+           : ((C.camaraId && perfilDeCamara(C.camaraId)) ? "Guardar la calibración (sustituye la anterior)"
+                                                         : "Guardar la calibración")}</button></div>`;
     }
   }
   return h;
@@ -802,6 +915,8 @@ function ataAjustes(){
 
   /* calibración */
   on("cAbr","click",()=>{ S.vista="medir"; pinta(); setTimeout(()=>abreCamara(S.camaraId),50); });
+  on("cImg","click",()=>{ S.pendCal=true; $("#fImg").click(); });
+  on("cVid","click",()=>{ S.pendCal=true; $("#fVid").click(); });
   on("cCap","click",()=>{
     const v=S.src.el, c=document.createElement("canvas");
     c.width=S.src.w; c.height=S.src.h; c.getContext("2d").drawImage(v,0,0);
@@ -880,32 +995,37 @@ function ataAjustes(){
    el primero que encontrase, que es el viejo. */
 function guardaCalib(){
   const o=S.calib.out; if(!o||o.err) return;
-  const previo = S.calib.camaraId ? perfilDeCamara(S.calib.camaraId) : null;
+  const aj = esArchivo(), uso = aj ? (S.calib.uso||"foto") : "vivo";
+  const previo = (!aj && S.calib.camaraId) ? perfilDeCamara(S.calib.camaraId) : null;
   let sustituir=false;
   if(previo) sustituir = confirm("«"+nombreCamara(S.calib.camaraId)+"» ya tiene calibración"
     +(previo.datos?" del "+new Date(previo.datos.fecha).toLocaleDateString("es-ES"):"")+".\n\n"
     +"Aceptar: sustituirla.\nCancelar: conservar las dos.");
-  if(o.delta===null && !confirm("Sin lectura del sensor frontal se guardará con δ = 0.\n\n¿Continuar?")) return;
+  if(o.delta===null && !aj
+     && !confirm("Sin lectura del sensor frontal se guardará con δ = 0.\n\n¿Continuar?")) return;
   if(o.delta!==null && Math.abs(o.delta)>DELTA_MAX
      && !confirm("δ = "+fmt(o.delta,2)+"° no es creíble.\n\n¿Guardar de todas formas?")) return;
   let name;
   if(sustituir) name=previo.name;
   else {
-    name = prompt("Nombre de esta calibración:",
-      (S.calib.camaraId?nombreCamara(S.calib.camaraId):"cámara")+" · en vivo "+S.src.w+"×"+S.src.h);
+    name = prompt(aj?"Nombre del perfil:":"Nombre de esta calibración:",
+      (aj ? "cámara ajena" : (S.calib.camaraId?nombreCamara(S.calib.camaraId):"cámara"))
+        +" · "+USOS[uso]+" "+S.src.w+"×"+S.src.h);
     if(!name) return;
   }
   const d = {fRel:o.fRel, y0Rel:o.y0Rel, delta:o.delta===null?0:o.delta,
     deltaRoll:(o.deltaRoll===null||o.deltaRoll===undefined)?0:+o.deltaRoll.toFixed(3), uF:0.40,
-    w:S.src.w, h:S.src.h, camaraId:S.calib.camaraId||"", uso:"vivo",
+    w:S.src.w, h:S.src.h, camaraId: aj?"":(S.calib.camaraId||""), uso,
     datos:registroCalib(o),
     note:"Ajuste de "+o.n+" puntos, rms "+fmt(o.rms,2)+" px, "+S.src.w+"×"+S.src.h+" px (versión básica)"};
   let id;
   if(sustituir){ id=previo.id; Object.assign(previo, d, {id, name}); }
   else { id="p"+Date.now(); S.perfiles.push(Object.assign({id,name}, d)); }
   S.perfilId=id; guarda();
-  alert(sustituir?"Calibración sustituida.":"Calibración guardada.");
-  S.src=null; S.calib.out=null; pinta();
+  alert(sustituir ? "Calibración sustituida."
+    : (aj ? "Perfil guardado para "+USOS[uso]+". Al cargar una foto o un vídeo de esa cámara, elígelo en la lista."
+          : "Calibración guardada."));
+  cierraVideo(); S.src=null; S.calib.out=null; pinta();
 }
 
 /* Importación: nunca borra. Ante coincidencia se pregunta, y por omisión se
@@ -1030,6 +1150,10 @@ function informeEnsayo(){
 
 /* ------------------------------------------------------------ arranque */
 addEventListener("resize",()=>{ mide(); if(S.src) encaja(); dibuja(); });
+$("#fImg").addEventListener("change",e=>{
+  const f=e.target.files&&e.target.files[0]; if(f) cargaImagen(f, !!S.pendCal); e.target.value=""; });
+$("#fVid").addEventListener("change",e=>{
+  const f=e.target.files&&e.target.files[0]; if(f) cargaVideo(f, !!S.pendCal); e.target.value=""; });
 $("#tbMed").addEventListener("click",()=>{ S.vista="medir"; pinta(); });
 $("#tbAju").addEventListener("click",()=>{ S.vista="ajustes"; S.edEns=null; pinta(); });
 mide(); pinta(); dibuja();
