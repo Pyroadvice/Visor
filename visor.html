@@ -96,6 +96,7 @@ a{color:var(--acc)}
     <button class="tab on" data-m="foto">Foto</button>
     <button class="tab" data-m="video">Vídeo</button>
     <button class="tab" data-m="directo">Directo</button>
+    <button class="tab" data-m="camaras">Cámaras</button>
     <button class="tab" data-m="calib">Calibración</button>
     <button class="tab" data-m="ajustes">Ajustes</button>
   </div>
@@ -162,12 +163,28 @@ const S = {
   sel:-1,                 // -1 = origen ; 0..n-1 = índice de punto
   paso:"fino",            // fino | normal
   view:{s:1, tx:0, ty:0, fit:1},
-  calib:{ puntos:[], d:100, hCam:0, sensor:0, out:null, tipo:"phi", camId:"", origen:"", capId:"" },
+  calib:{ puntos:[], d:100, hCam:0, sensor:0, out:null, tipo:"phi", camaraId:"", origen:"", capId:"" },
   reticula:false,
   liveErr:"",
   cams:[], camId: localStorage.getItem("vpd.camId")||"", capturas:[], capErr:"",
+  camaras: JSON.parse(localStorage.getItem("vpd.camaras")||"[]"),
+  camaraId: localStorage.getItem("vpd.camaraId")||"",
+  nuevaCam:null,          // configuración en preparación: {deviceId, zoom, nombre}
+  zoomCap:null,           // margen de zoom que admite el dispositivo abierto
   tecnico: localStorage.getItem("vpd.tecnico")==="1"
 };
+const guardaCam = () => {
+  localStorage.setItem("vpd.camaras", JSON.stringify(S.camaras));
+  localStorage.setItem("vpd.camaraId", S.camaraId);
+};
+/* Una «cámara» aquí es una CONFIGURACIÓN con nombre: dispositivo más zoom.
+   El navegador solo enumera dispositivos, y el ×2 del objetivo principal no
+   es un dispositivo distinto sino el mismo con otro zoom, así que un perfil
+   tiene que colgar de la configuración y no del dispositivo. */
+const camara = id => S.camaras.find(c=>c.id===id) || null;
+const nombreCamara = id => { const c=camara(id); return c? c.nombre : "—"; };
+const perfilDeCamara = id => S.perfiles.find(q=>q.camaraId && q.camaraId===id) || null;
+
 const guarda = () => {
   localStorage.setItem("vpd.perfiles", JSON.stringify(S.perfiles));
   localStorage.setItem("vpd.perfilId", S.perfilId);
@@ -649,7 +666,7 @@ async function cargaImagen(file){
   S.srcCamId="";                 // un archivo no viene de ninguna cámara de este aparato
   limpiaMarcas();
   if (S.modo==="calib"){ S.calib.puntos.forEach(p=>p.y=null); S.calib.out=null;
-    S.calib.origen="archivo"; S.calib.camId=""; S.calib.capId=""; }
+    S.calib.origen="archivo"; S.calib.camaraId=""; S.calib.capId=""; }
   encaja(); $("#hint").classList.add("hide"); pinta();
 }
 let vidRAF=0;
@@ -699,11 +716,9 @@ async function capturaCalib(){
   c.width=S.src.w; c.height=S.src.h;
   c.getContext("2d").drawImage(S.src.el,0,0);
   const blob=await new Promise(r=>c.toBlob(r,"image/jpeg",0.92));
-  const cam=S.cams.find(x=>x.deviceId===S.srcCamId);
-  const i=S.cams.findIndex(x=>x.deviceId===S.srcCamId);
   const o={id:"c"+Date.now(), ts:Date.now(), w:S.src.w, h:S.src.h,
-           camId:S.srcCamId||"", camLabel: i>=0? ("Trasera "+(i+1)) : (cam?.label||"objetivo desconocido"),
-           blob};
+           camaraId:S.camaraId||"", camLabel: nombreCamara(S.camaraId),
+           zoom:S.zoomActual??null, blob};
   try{ await idbPut(o); S.capErr=""; }catch(e){ S.capErr="No se pudo guardar la captura: "+e.message; }
   await cargaCapturas();
 }
@@ -712,11 +727,11 @@ async function usaCaptura(id){
   cerrarCamara();
   const bmp=await createImageBitmap(c.blob);
   S.src={kind:"img", el:bmp, w:bmp.width, h:bmp.height};
-  S.srcCamId=c.camId||"";
+  S.srcCamId=""; S.calib.camaraId=c.camaraId||"";
   /* Sin perfil para este objetivo, lo que hace falta es el ajuste óptico
      completo: «solo desalineación» no permite crear un perfil nuevo. */
-  if(!S.perfiles.some(q=>q.camId && q.camId===c.camId)) S.calib.tipo="full";
-  S.calib.camId = c.camId||""; S.calib.origen="captura"; S.calib.capId=c.id;
+  if(!perfilDeCamara(c.camaraId)) S.calib.tipo="full";
+  S.calib.origen="captura"; S.calib.capId=c.id;
   limpiaMarcas(); S.calib.puntos.forEach(p=>p.y=null); S.calib.out=null;
   encaja(); $("#hint").classList.add("hide"); pinta();
 }
@@ -737,26 +752,42 @@ async function listaCamaras(){
   }catch(e){}
 }
 function nombreCam(c,i){
-  const p=S.perfiles.find(q=>q.camId && q.camId===c.deviceId);
+  const p=null;   // los perfiles cuelgan de la configuración, no del dispositivo
   const z=p?zoomDe(p):null;
   return "Trasera "+(i+1)+(z!==null?"  ·  ×"+fmt(z,2)+" (calibrada)":"  ·  sin calibrar");
 }
-async function abreDirecto(){
+/* Abre una CONFIGURACIÓN guardada: dispositivo más zoom. */
+async function abreCamara(camId){
+  const c=camara(camId); if(!c) return abreDirecto();
+  S.camaraId=camId; guardaCam();
+  return abreDirecto(c.deviceId, c.zoom);
+}
+async function aplicaZoom(track, z){
+  const caps = track.getCapabilities ? track.getCapabilities() : null;
+  S.zoomCap = (caps && caps.zoom) ? {min:caps.zoom.min, max:caps.zoom.max, step:caps.zoom.step||0.1} : null;
+  if(S.zoomCap && z!==null && z!==undefined && isFinite(z)){
+    try{ await track.applyConstraints({advanced:[{zoom:+z}]}); }catch(e){}
+  }
+  return track.getSettings ? (track.getSettings().zoom ?? null) : null;
+}
+async function abreDirecto(devId, zoom){
   S.liveErr="";
   try{
     /* Sin forzar 3840 de ancho: esa petición hacía que Chrome abriera la
        cámara ultra gran angular en vez de la principal, con una focal un 65 %
        menor que la del perfil de foto. */
-    const vc = S.camId ? {deviceId:{exact:S.camId}, width:{ideal:1920}}
-                       : {facingMode:{ideal:"environment"}, width:{ideal:1920}};
+    const idUsar = devId || S.camId;
+    const vc = idUsar ? {deviceId:{exact:idUsar}, width:{ideal:1920}}
+                      : {facingMode:{ideal:"environment"}, width:{ideal:1920}};
     const st = await navigator.mediaDevices.getUserMedia({video:vc, audio:false});
     await listaCamaras();
+    const tr = st.getVideoTracks()[0];
+    S.zoomActual = await aplicaZoom(tr, zoom);
     const v=$("#vid"); v.src=""; v.srcObject=st; await v.play();
     S.src={kind:"live", el:v, w:v.videoWidth, h:v.videoHeight};
-    const idReal = st.getVideoTracks()[0]?.getSettings?.().deviceId;
-    S.srcCamId = idReal || S.camId || "";
-    const acorde = S.perfiles.find(q=>q.camId && q.camId===S.srcCamId);
-    if(acorde){ S.perfilId=acorde.id; guarda(); }     // perfil propio de ese objetivo
+    S.srcCamId = tr?.getSettings?.().deviceId || idUsar || "";
+    const acorde = perfilDeCamara(S.camaraId);
+    if(acorde){ S.perfilId=acorde.id; guarda(); }     // perfil propio de esa configuración
     limpiaMarcas(); encaja(); $("#hint").classList.add("hide");
     const bucle=()=>{ if(S.src&&S.src.kind==="live"){dibuja(); vidRAF=requestAnimationFrame(bucle);} };
     cancelAnimationFrame(vidRAF); bucle(); pinta();
@@ -843,7 +874,8 @@ function ajusta(){
 /* -------------------------------------------------------------- interfaz */
 function pinta(){
   const P=$("#panel"), m=S.modo;
-  if (m==="calib") P.innerHTML = uiCalib();
+  if (m==="camaras") P.innerHTML = uiCamaras();
+  else if (m==="calib") P.innerHTML = uiCalib();
   else if (m==="ajustes") P.innerHTML = uiAjustes();
   else P.innerHTML = uiMedida(m);
   enlaza(); dibuja(); pintaBadges();
@@ -934,14 +966,16 @@ function uiMedida(m){
       : `<div class="btns"><button class="p" id="bLive">Abrir cámara</button></div>`;
     if (S.liveErr) h += `<div class="err">Cámara: ${S.liveErr}</div>`;
   }
-  if (m==="directo" && S.src && S.src.kind==="live" && S.cams.length>1){
-    h += `<div class="row"><label>Objetivo</label><select id="iCam">
-      ${S.cams.map((c,i)=>`<option value="${c.deviceId}"${c.deviceId===S.srcCamId?" selected":""}>${
-        nombreCam(c,i)}</option>`).join("")}
-    </select></div>
-    <div class="note">Solo se listan las traseras. El factor ×  no lo da el sistema: se deduce de la focal
-    calibrada de cada objetivo, tomando como ×1 el principal, así que aparece en cuanto calibras ese objetivo.
-    Al elegir una cámara con perfil propio, el perfil se activa solo.</div>`;
+  if (m==="directo" && S.src && S.src.kind==="live"){
+    h += S.camaras.length
+      ? `<div class="row"><label>Cámara</label><select id="iCam">
+          ${S.camaras.map(c=>`<option value="${c.id}"${c.id===S.camaraId?" selected":""}>${c.nombre}${
+            perfilDeCamara(c.id)?"":"  ·  sin calibrar"}</option>`).join("")}
+        </select></div>
+        <div class="note">Son las cámaras que definiste en la pestaña Cámaras. Al elegir una, se aplica su
+        objetivo y su zoom, y se activa su perfil de calibración.</div>`
+      : `<div class="verdict v-na" style="text-align:left;font-weight:500">No has definido ninguna cámara.
+         Ve a la pestaña <b>Cámaras</b>, enciende la cámara, elige objetivo y zoom y guárdala con un nombre.</div>`;
   }
   if (!S.perfiles.length) return h + `<div class="verdict v-no" style="text-align:left;font-weight:500">
     <b>No hay ningún perfil de cámara.</b><br>Sin él no se puede convertir lo que se ve en alturas, así que la
@@ -967,10 +1001,9 @@ function uiMedida(m){
        elección: es el que se calibró para ese objetivo, o no hay ninguno.
        Dos selectores aparentemente alternativos para una sola decisión
        confunden más de lo que ayudan. */
-    const pA=S.perfiles.find(q=>q.camId && q.camId===S.srcCamId);
-    const i=S.cams.findIndex(c=>c.deviceId===S.srcCamId);
+    const pA=perfilDeCamara(S.camaraId);
     h += `<div class="card" style="padding:10px">
-      <div class="kv"><span>objetivo en uso</span><b>${i>=0?"Trasera "+(i+1):"—"}</b></div>
+      <div class="kv"><span>cámara en uso</span><b>${nombreCamara(S.camaraId)}</b></div>
       <div class="kv"><span>perfil que le corresponde</span><b style="color:${pA?"var(--ok)":"var(--bad)"}">${
         pA? pA.name+(zoomDe(pA)!==null?" · ×"+fmt(zoomDe(pA),2):"") : "ninguno"}</b></div>
       ${pA?"":`<div class="verdict v-no" style="text-align:left;font-weight:500">Este objetivo no está calibrado,
@@ -1165,34 +1198,86 @@ function tecBoton(){
    objetivo es un HECHO y se afirma; solo cuando viene de un archivo, y la
    página no puede saberlo, se ofrece como elección. */
 function bloqueObjetivo(){
-  const i=S.cams.findIndex(c=>c.deviceId===S.calib.camId);
-  if (S.calib.origen==="captura" && S.calib.camId)
+  if (S.calib.origen==="captura" && S.calib.camaraId)
     return `<div class="card" style="padding:10px;border-color:var(--acc)">
-      <div class="big"><s>Calibrando el objetivo</s><b style="font-size:17px">${
-        i>=0?"Trasera "+(i+1):"el de la captura"}</b></div>
+      <div class="big"><s>Calibrando la cámara</s><b style="font-size:17px">${nombreCamara(S.calib.camaraId)}</b></div>
       <div class="kv"><span>fotograma</span><b>${S.src.w}×${S.src.h} px</b></div></div>`;
-  return `<h3>¿A qué objetivo corresponde?</h3>
-    <div class="row"><label>Objetivo</label><select id="cCam">
-      <option value=""${S.calib.camId?"":" selected"}>— ninguno —</option>
-      ${S.cams.map((c,k)=>`<option value="${c.deviceId}"${c.deviceId===S.calib.camId?" selected":""}>${
-        nombreCam(c,k)}</option>`).join("")}
+  return `<h3>¿A qué cámara corresponde?</h3>
+    <div class="row"><label>Cámara</label><select id="cCam">
+      <option value=""${S.calib.camaraId?"":" selected"}>— ninguna —</option>
+      ${S.camaras.map(c=>`<option value="${c.id}"${c.id===S.calib.camaraId?" selected":""}>${c.nombre}</option>`).join("")}
     </select></div>
-    <div class="note">Esta imagen no procede de una captura, así que la página no sabe con qué objetivo se tomó.
-    ${S.cams.length
-      ? "Elígelo si corresponde a una cámara de este aparato; si viene de otro equipo, déjalo en «ninguno» y el perfil se seleccionará a mano en Foto o Vídeo."
-      : "<b>Aún no hay objetivos listados</b>: el navegador no los revela hasta conceder permiso de cámara. Ábrela una vez y vuelve."}</div>`;
+    <div class="note">Esta imagen no procede de una captura, así que la página no sabe con qué cámara se tomó.
+    ${S.camaras.length
+      ? "Elígela si corresponde a una de las tuyas; si viene de otro equipo, déjalo en «ninguna» y el perfil se seleccionará a mano en Foto o Vídeo."
+      : "<b>Aún no has definido ninguna cámara</b>: hazlo en la pestaña Cámaras si esta imagen procede de una de las tuyas."}</div>`;
 }
 function estadoCalib(){
   const pts=S.calib.puntos;
   const fij=pts.filter(p=>p.y!==null && isFinite(+p.h)).length;
   const alt=pts.filter(p=>isFinite(+p.h)).length;
   const min=S.calib.tipo==="phi"?2:3;
-  const perfil=S.perfiles.find(q=>q.camId && S.calib.camId && q.camId===S.calib.camId);
+  const perfil=perfilDeCamara(S.calib.camaraId);
   const geom=!!(+S.calib.d) && S.calib.hCam!=="" && S.calib.hCam!==null;
   return {fij, alt, min, nTot:pts.length, geom, perfil,
           ajuste: !!(S.calib.out && !S.calib.out.err),
           listo: geom && fij>=min};
 }
+function uiCamaras(){
+  let h=`<div class="note">Aquí defines las cámaras con las que vas a medir. Una cámara es una
+  <b>configuración con nombre</b>: el objetivo más el zoom. Eso importa porque el ×2 del objetivo principal
+  no es otra cámara para el navegador, sino la misma con otro zoom, y sin embargo <b>ve distinto y necesita su
+  propia calibración</b>. Cada cámara que definas aquí se calibra una vez y queda lista para usar en Directo.</div>`;
+
+  /* --- cámaras ya definidas --- */
+  if (S.camaras.length){
+    h+=`<h3>Cámaras definidas</h3><table>
+      <tr><th>Nombre</th><th>Zoom</th><th>Calibrada</th><th></th></tr>
+      ${S.camaras.map(c=>{
+        const pf=perfilDeCamara(c.id);
+        return `<tr class="${S.camaraId===c.id?"sel":""}">
+          <td><input type="text" class="cmNom" data-id="${c.id}" value="${(c.nombre||"").replace(/"/g,"&quot;")}"
+              style="font:13px inherit"></td>
+          <td>${c.zoom?"×"+fmt(c.zoom,1):"—"}</td>
+          <td style="color:${pf?"var(--ok)":"var(--bad)"};font-size:11.5px">${pf?"sí":"no"}</td>
+          <td><button class="mini cmUsa" data-id="${c.id}">abrir</button>
+              <button class="mini cmDel" data-id="${c.id}">×</button></td></tr>`;}).join("")}
+    </table>
+    <div class="note">Escribe el nombre que quieras en cada fila: «Principal ×1», «Principal ×2», «Gran angular»…
+    «Abrir» la enciende para comprobarla o para capturarla en Calibración.</div>`;
+  } else h+=`<div class="verdict v-na">Todavía no has definido ninguna cámara.</div>`;
+
+  /* --- añadir --- */
+  h+=`<h3>Añadir una cámara</h3>`;
+  if (!(S.src && S.src.kind==="live")){
+    h+=`<div class="btns"><button class="p" id="cmAbrir">Encender la cámara</button></div>
+    <div class="note">Se enciende, eliges objetivo y zoom mirando la imagen, y la guardas con un nombre.</div>`;
+    if (S.liveErr) h+=`<div class="err">${S.liveErr}</div>`;
+  } else {
+    h+=`<div class="row"><label>Objetivo</label><select id="cmDev">
+      ${S.cams.map((c,i)=>`<option value="${c.deviceId}"${c.deviceId===S.srcCamId?" selected":""}>${
+        (c.label||("objetivo "+(i+1))).replace(/</g,"")}</option>`).join("")}
+    </select></div>`;
+    if (S.zoomCap)
+      h+=`<div class="row"><label>Zoom</label>
+        <input type="number" step="0.1" id="cmZoom" value="${fmt(S.zoomActual??S.zoomCap.min,1)}"
+          min="${S.zoomCap.min}" max="${S.zoomCap.max}"><span class="u">×</span></div>
+        <div class="note">Este objetivo admite zoom de ×${fmt(S.zoomCap.min,1)} a ×${fmt(S.zoomCap.max,1)}.
+        Cada valor que uses para medir necesita su propia cámara aquí y su propia calibración.</div>`;
+    else
+      h+=`<div class="note">Este objetivo no permite fijar el zoom desde el navegador, así que la cámara queda
+      definida solo por el objetivo. No uses el zoom de pellizco al medir: cambiaría lo que ve y la calibración
+      dejaría de valer.</div>`;
+    h+=`<div class="row"><label>Nombre</label><input type="text" id="cmNombre"
+      placeholder="p. ej. Principal ×1" value=""></div>
+    <div class="btns"><button class="g" id="cmGuardar">Guardar esta cámara</button>
+      <button id="cmCerrar">Cerrar</button></div>
+    <div class="note">Fuente actual: <b>${S.src.w}×${S.src.h} px</b>${
+      S.zoomActual?` · zoom ×${fmt(S.zoomActual,1)}`:""}.</div>`;
+  }
+  return h;
+}
+
 function uiCalib(){
   const o = S.calib.out, esPhi = S.calib.tipo==="phi";
   let h = `<div class="seg">
@@ -1228,7 +1313,7 @@ function uiCalib(){
     h += `<h3>Capturas guardadas</h3><table>
       <tr><th>Imagen</th><th>Objetivo</th><th></th></tr>
       ${S.capturas.map(c=>{
-        const cal=S.perfiles.find(q=>q.camId && q.camId===c.camId);
+        const cal=perfilDeCamara(c.camaraId);
         const act=S.calib.capId===c.id;
         return `<tr class="${act?"sel":""}">
         <td><a href="${urlDe(c)}" download="calib-${(c.camLabel||"obj").replace(/\s+/g,"")}-${c.w}x${c.h}.jpg">
@@ -1340,6 +1425,7 @@ function uiAjustes(){
     <div class="kv"><span>centro óptico relativo</span><b>${fmt(p.y0Rel,5)}</b></div>
     <div class="kv"><span>desalineación δ</span><b>${(p.delta>=0?"+":"")+fmt(p.delta,3)}°</b></div>
     <div class="kv"><span>factor de zoom del objetivo</span><b>${zoomDe(p)===null?"—":"×"+fmt(zoomDe(p),2)}</b></div>
+    <div class="kv"><span>cámara asociada</span><b>${p.camaraId?nombreCamara(p.camaraId):"ninguna"}</b></div>
     <div class="kv"><span>calibrado sobre</span><b>${p.w&&p.h?p.w+"×"+p.h+" px (relación "+fmt(p.w/p.h,3)+")":"sin registrar"}</b></div>
     <div class="kv"><span>error de la focal</span><b>${fmt(p.uF,2)} %</b></div>
   </div>
@@ -1434,15 +1520,33 @@ function enlaza(){
     S.sel = S.marks.puntos.length-1; pinta();
   });
   on("bRet","click",()=>{ S.reticula=!S.reticula; pinta(); });
+  on("cmAbrir","click",()=>abreDirecto());
+  on("cmCerrar","click",()=>{ cerrarCamara(); S.src=null; $("#hint").classList.remove("hide"); pinta(); });
+  on("cmDev","change",async e=>{ cerrarCamara(); await abreDirecto(e.target.value); });
+  on("cmZoom","change",async e=>{ cerrarCamara(); await abreDirecto(S.srcCamId, +e.target.value); });
+  on("cmGuardar","click",()=>{
+    const nom=($("#cmNombre").value||"").trim();
+    if(!nom){ alert("Ponle un nombre que te diga qué es: «Principal ×1», «Gran angular»…"); return; }
+    const c={id:"cm"+Date.now(), nombre:nom, deviceId:S.srcCamId||"",
+             zoom:S.zoomActual??null, w:S.src.w, h:S.src.h, ts:Date.now()};
+    S.camaras.push(c); S.camaraId=c.id; guardaCam(); pinta();
+    alert("Cámara «"+nom+"» guardada. Ahora captúrala y calíbrala en Calibración.");});
+  document.querySelectorAll(".cmNom").forEach(x=>x.addEventListener("change",e=>{
+    const c=camara(e.target.dataset.id); if(c){ c.nombre=e.target.value; guardaCam(); pinta(); }}));
+  document.querySelectorAll(".cmUsa").forEach(b=>b.addEventListener("click",e=>{
+    cerrarCamara(); abreCamara(e.currentTarget.dataset.id);}));
+  document.querySelectorAll(".cmDel").forEach(b=>b.addEventListener("click",e=>{
+    const id=e.currentTarget.dataset.id, c=camara(id);
+    const pf=perfilDeCamara(id);
+    if(!confirm("¿Borrar la cámara «"+(c?c.nombre:"")+"»?"+(pf?"\n\nSu perfil de calibración «"+pf.name+"» quedará sin asociar.":""))) return;
+    S.camaras=S.camaras.filter(x=>x.id!==id);
+    if(S.camaraId===id) S.camaraId="";
+    guardaCam(); pinta();}));
   on("bHor","click",()=>{ S.med.horiz=!S.med.horiz; guarda(); pinta(); });
   on("bObl","click",()=>{ S.med.obliq=!S.med.obliq; guarda(); pinta(); });
   on("iAlt","change",e=>{ S.med.alturas=e.target.value; guarda(); pinta(); });
   on("iAng","change",e=>{ S.med.angulos=e.target.value; guarda(); pinta(); });
-  on("iCam","change",async e=>{
-    S.camId=e.target.value; localStorage.setItem("vpd.camId",S.camId);
-    cancelAnimationFrame(vidRAF);
-    ($("#vid").srcObject?.getTracks()||[]).forEach(t=>t.stop());
-    await abreDirecto();});
+  on("iCam","change",async e=>{ cerrarCamara(); await abreCamara(e.target.value); });
   on("bCalibAqui","click",()=>{
     S.modo="calib"; S.calib.out=null;
     if(!S.calib.puntos.length) S.calib.puntos=[{h:null,y:null},{h:null,y:null},{h:null,y:null},{h:null,y:null},{h:null,y:null}];
@@ -1495,19 +1599,19 @@ function enlaza(){
   on("cAdd","click",()=>{S.calib.puntos.push({h:null,y:null});pinta();});
   on("cDel","click",()=>{S.calib.puntos.pop();pinta();});
   on("cRun","click",()=>{S.calib.out=ajusta();pinta();});
-  on("cCam","change",e=>{S.calib.camId=e.target.value; pinta();});
+  on("cCam","change",e=>{S.calib.camaraId=e.target.value; pinta();});
   on("cSave","click",()=>{
     const o=S.calib.out; if(!o||o.err) return;
     const name=prompt("Nombre del perfil (incluye modo de captura y zoom):","perfil "+S.src.w+"×"+S.src.h);
     if(!name) return;
     const id="p"+Date.now();
     S.perfiles.push({id,name,fRel:o.fRel,y0Rel:o.y0Rel,delta:o.delta,uF:0.40,
-      w:S.src.w, h:S.src.h, camId:S.calib.camId||"",
+      w:S.src.w, h:S.src.h, camaraId:S.calib.camaraId||"",
       note:"Ajuste de "+o.n+" puntos, rms "+fmt(o.rms,2)+" px, "+S.src.w+"×"+S.src.h+" px"});
     S.perfilId=id; guarda(); pinta();
-    alert(S.calib.camId
-      ? "Perfil guardado y asociado al objetivo. Ya figurará como calibrado en Directo."
-      : "Perfil guardado SIN asociar a ningún objetivo: habrá que elegirlo a mano, y en Directo ese objetivo seguirá figurando como sin calibrar.");
+    alert(S.calib.camaraId
+      ? "Perfil guardado y asociado a la cámara «"+nombreCamara(S.calib.camaraId)+"». Ya figurará como calibrada en Directo."
+      : "Perfil guardado SIN asociar a ninguna cámara: habrá que elegirlo a mano en Foto o Vídeo.");
   });
   on("cSaveD","click",()=>{
     const o=S.calib.out; if(!o||o.err) return;
@@ -1564,7 +1668,7 @@ function enlaza(){
       if(!q||!q.fRel||!q.y0Rel) continue;
       S.perfiles.push({id:"i"+Date.now()+"_"+(n++), name:(q.name||"perfil importado")+" (importado)",
         fRel:+q.fRel, y0Rel:+q.y0Rel, delta:+(q.delta||0), uF:+(q.uF||0.40),
-        w:q.w||null, h:q.h||null, camId:"",          // el identificador de cámara no es portable
+        w:q.w||null, h:q.h||null, camaraId:"",       // el enlace a cámara no es portable
         note:(q.note||"")+" · importado "+new Date().toISOString().slice(0,10)});
     }
     if(!n){ alert("Ninguno de los perfiles del texto era utilizable."); return; }
