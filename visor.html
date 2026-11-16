@@ -166,7 +166,7 @@ const S = {
   calib:{ puntos:[], d:100, hCam:0, sensor:0, out:null, tipo:"phi", camaraId:"", origen:"", capId:"" },
   reticula:false,
   liveErr:"",
-  cams:[], camId: localStorage.getItem("vpd.camId")||"", capturas:[], capErr:"",
+  cams:[], capturas:[], capErr:"", camDistinta:false,
   camaras: JSON.parse(localStorage.getItem("vpd.camaras")||"[]"),
   camaraId: localStorage.getItem("vpd.camaraId")||"",
   nuevaCam:null,          // configuración en preparación: {deviceId, zoom, nombre}
@@ -839,22 +839,42 @@ async function abreDirecto(devId, zoom){
     /* Sin forzar 3840 de ancho: esa petición hacía que Chrome abriera la
        cámara ultra gran angular en vez de la principal, con una focal un 65 %
        menor que la del perfil de foto. */
-    const idUsar = devId || S.camId;
-    const vc = idUsar ? {deviceId:{exact:idUsar}, width:{ideal:1920}}
-                      : {facingMode:{ideal:"environment"}, width:{ideal:1920}};
-    const st = await navigator.mediaDevices.getUserMedia({video:vc, audio:false});
+    /* Pedir un deviceId como «exact» falla con OverconstrainedError si ese
+       identificador ya no existe, cosa que ocurre al revocar o reconceder el
+       permiso de cámara. Se intenta en cascada y se avisa si hubo que caer a
+       otra lente, porque calibrar la que no es sería peor que no calibrar. */
+    const intentos=[];
+    if(devId) intentos.push({deviceId:{exact:devId}, width:{ideal:1920}});
+    intentos.push({facingMode:{ideal:"environment"}, width:{ideal:1920}});
+    intentos.push({width:{ideal:1920}});
+    intentos.push({});
+    let st=null, ultimo=null;
+    for(const v of intentos){
+      try{ st=await navigator.mediaDevices.getUserMedia({video:v, audio:false}); break; }
+      catch(e){ ultimo=e; }
+    }
+    if(!st) throw (ultimo||new Error("no se pudo abrir ninguna cámara"));
     await listaCamaras();
     const tr = st.getVideoTracks()[0];
     S.zoomActual = await aplicaZoom(tr, zoom);
     const v=$("#vid"); v.src=""; v.srcObject=st; await v.play();
     S.src={kind:"live", el:v, w:v.videoWidth, h:v.videoHeight};
-    S.srcCamId = tr?.getSettings?.().deviceId || idUsar || "";
+    S.srcCamId = tr?.getSettings?.().deviceId || devId || "";
+    S.camDistinta = !!(devId && S.srcCamId && S.srcCamId!==devId);
     const acorde = perfilDeCamara(S.camaraId);
     if(acorde){ S.perfilId=acorde.id; guarda(); }     // perfil propio de esa configuración
     limpiaMarcas(); encaja(); $("#hint").classList.add("hide");
     const bucle=()=>{ if(S.src&&S.src.kind==="live"){dibuja(); vidRAF=requestAnimationFrame(bucle);} };
     cancelAnimationFrame(vidRAF); bucle(); pinta();
-  }catch(e){ S.liveErr=e.message||String(e); pinta(); }
+  }catch(e){
+    const n=e&&e.name;
+    S.liveErr = n==="NotAllowedError" ? "permiso denegado: concédelo en el candado de la barra de direcciones"
+      : n==="NotFoundError" ? "este aparato no ofrece ninguna cámara al navegador"
+      : n==="NotReadableError" ? "la cámara está ocupada por otra aplicación: ciérrala y vuelve a intentarlo"
+      : n==="OverconstrainedError" ? "la lente guardada ya no existe para el navegador; vuelve a definir la cámara en la pestaña Cámaras"
+      : (e.message||String(e));
+    pinta();
+  }
 }
 function congela(){
   if (!S.src||S.src.kind!=="live") return;
@@ -1067,6 +1087,9 @@ function uiMedida(m){
     const pA=perfilDeCamara(S.camaraId);
     h += `<div class="card" style="padding:10px">
       <div class="kv"><span>cámara en uso</span><b>${nombreCamara(S.camaraId)}</b></div>
+      ${S.camDistinta?`<div class="verdict v-no" style="text-align:left;font-weight:500">El navegador no pudo abrir
+        la lente guardada y ha abierto otra. <b>No midas ni calibres así</b>: vuelve a definir esta cámara en la
+        pestaña Cámaras.</div>`:""}
       <div class="kv"><span>perfil que le corresponde</span><b style="color:${pA?"var(--ok)":"var(--bad)"}">${
         pA? pA.name+(zoomDe(pA)!==null?" · ×"+fmt(zoomDe(pA),2):"") : "ninguno"}</b></div>
       ${pA?"":`<div class="verdict v-no" style="text-align:left;font-weight:500">Este objetivo no está calibrado,
@@ -1670,7 +1693,7 @@ function enlaza(){
   $$(".cFix").forEach(e=>e.addEventListener("click",ev=>{
     if(!dentro()) return;
     S.calib.puntos[+ev.target.dataset.i].y = centroImg().y; pinta(); }));
-  on("bCamCal","click",abreDirecto);
+  on("bCamCal","click",()=>{ S.camaraId? abreCamara(S.camaraId) : abreDirecto(); });
   on("bCapCal","click",capturaCalib);
   on("bCerrarCam","click",()=>{ cerrarCamara(); S.src=null;
     $("#hint").classList.remove("hide"); pinta(); });
@@ -1730,7 +1753,7 @@ function enlaza(){
     S.perfiles=[]; S.perfilId="";
     S.med={d:100, ud:1.0, hRef:0, tol:20, upx:3, uphi:0.3, phiManual:"", rollManual:"",
            obliq:false, angulos:"15, 30", horiz:false, alturas:"20, 30"};
-    S.camId=""; S.srcCamId=""; localStorage.removeItem("vpd.camId");
+    S.srcCamId=""; localStorage.removeItem("vpd.camId");
     S.calib={puntos:[], d:100, hCam:0, sensor:0, out:null, tipo:"phi", camId:"", origen:"", capId:""};
     S.marks={origen:null, puntos:[{lab:"Altura de funcionamiento", x:null, y:null}]}; S.sel=-1;
     S.src=null; S.reticula=false;
