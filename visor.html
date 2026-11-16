@@ -160,7 +160,7 @@ const S = {
     obliq:false, angulos:"15, 30", horiz:false, alturas:"20, 30"
   },
   src:null,
-  marks:{ origen:null, puntos:[{lab:"Altura de funcionamiento", x:null, y:null}] },
+  marks:{ origen:null, puntos:[{lab:"Altura de funcionamiento", x:null, y:null, hReal:null}] },
   sel:-1,                 // -1 = origen ; 0..n-1 = índice de punto
   paso:"fino",            // fino | normal
   view:{s:1, tx:0, ty:0, fit:1},
@@ -493,7 +493,7 @@ function medidas(){
     const cRoll = dx===null ? 0
                 : Math.abs(dx/g.f*Math.sin(uRoll*Math.PI/180))*d;
     const uc = Math.hypot(cDist,cF,cPhi,cPo,cPt,cRoll), U = 2*uc;
-    return {lab:q.lab, y:q.y, x:q.x, dx, ro, rt, dr, dH, H:dH+(+S.med.hRef||0), uc, U,
+    return {lab:q.lab, y:q.y, x:q.x, hReal:q.hReal, dx, ro, rt, dr, dH, H:dH+(+S.med.hRef||0), uc, U,
             comp:{cDist,cF,cPhi,cPo,cPt,cRoll},
             relU: Math.abs(dH)>1e-9 ? 100*U/Math.abs(dH) : null};
   });
@@ -1413,7 +1413,9 @@ function uiMedida(m){
       return `<tr class="${S.sel===i?"sel":""}">
         <td><span class="dot" style="background:${COL[i%COL.length]}"></span>
             <input type="text" class="mLab" data-i="${i}" list="dlEtiq" value="${(q.lab||"").replace(/"/g,"&quot;")}"
-                   placeholder="etiqueta" style="font:13px inherit"></td>
+                   placeholder="etiqueta" style="font:13px inherit">
+            <input type="number" step="0.001" class="mReal" data-i="${i}" value="${q.hReal??""}"
+                   placeholder="altura real (m)" style="font:12px inherit;margin-top:3px"></td>
         ${T?`<td>${q.y===null?"—":fmt(q.y,1)}</td><td>${x&&x.dx!==null?fmt(x.dx,0):"—"}</td>`:""}
         <td><b>${x?fmtH(x.H):"—"}</b></td>
         <td>${x?fmt(100*x.dr,2):"—"}</td>
@@ -1434,10 +1436,71 @@ function uiMedida(m){
   if (R){
     const hechos = R.filter(x=>x.y!==null);
     if (hechos.length){
+      /* El criterio del 4 % se refiere a la ALTURA QUE SE VERIFICA, no a la más
+         pequeña que se haya marcado de paso. La incertidumbre absoluta está
+         dominada por el error de marcado, que es fijo, así que en alturas
+         pequeñas la relativa se dispara sin que nada vaya mal: 1,4 cm sobre
+         19 cm son el 7 %, y sobre 2,4 m son el 0,6 %. Juzgar por la peor
+         convertía una medida sana en un suspenso. */
+      const may = hechos.reduce((a,b)=>Math.abs(b.dH)>Math.abs(a.dH)?b:a);
+      const sel = (S.sel>=0 && R[S.sel] && R[S.sel].y!==null) ? R[S.sel] : may;
       const peor = Math.max(...hechos.map(x=>x.relU));
-      const cls = peor<=4?"v-ok":(peor<=8?"v-na":"v-no");
-      h += `<div class="verdict ${cls}">Incertidumbre máxima ${fmt(peor,2)} % · ${peor<=4
+      const cls = sel.relU<=4?"v-ok":(sel.relU<=8?"v-na":"v-no");
+      h += `<div class="verdict ${cls}">${sel===may?"Altura mayor":"Marca "+(S.sel+1)}
+        ${fmtH(sel.dH)} m · incertidumbre ${fmt(sel.relU,2)} % · ${sel.relU<=4
         ?"cumple el criterio interno de 4 %":"por encima del objetivo interno de 4 %"}</div>`;
+      if (peor>sel.relU*1.5)
+        h += `<div class="note">La peor de todas las marcas es ${fmt(peor,2)} %, y corresponde a la altura más
+        pequeña. Es normal y no indica ningún fallo: la incertidumbre absoluta la domina el error de marcado en
+        píxeles, que no depende de la altura, así que al dividir por una altura pequeña el porcentaje se dispara.
+        El criterio del 4 % se refiere a la altura que se está verificando.</div>`;
+      /* COMPROBACIÓN CONTRA ALTURAS CONOCIDAS.
+
+         Con varias marcas de altura conocida se ajusta medida = a·real + b.
+         Los dos coeficientes separan los dos fallos que de otro modo se
+         confunden: la PENDIENTE a es un error de escala, y solo puede venir
+         de la distancia de observación o de la focal del perfil; el DESFASE b
+         es un error de origen, que no escala con la altura. Un residuo grande
+         alrededor de esa recta ya no es ninguna de las dos cosas: es marcado
+         o es que los puntos no están todos a la misma distancia.          */
+      const cmp = hechos.filter(x=>x.hReal!==null&&x.hReal!==undefined&&isFinite(+x.hReal));
+      if (cmp.length>=2){
+        const nn=cmp.length;
+        const sx=cmp.reduce((t,x)=>t+(+x.hReal),0), sy=cmp.reduce((t,x)=>t+x.dH,0);
+        const sxx=cmp.reduce((t,x)=>t+(+x.hReal)*(+x.hReal),0);
+        const sxy=cmp.reduce((t,x)=>t+(+x.hReal)*x.dH,0);
+        const det=nn*sxx-sx*sx;
+        const aE=det?(nn*sxy-sx*sy)/det:1, bE=det?(sy-aE*sx)/nn:0;
+        const rr=Math.sqrt(cmp.reduce((t,x)=>t+Math.pow(x.dH-(aE*(+x.hReal)+bE),2),0)/nn);
+        const escala=Math.abs(aE-1)>0.02, desfase=Math.abs(bE)>0.02*Math.abs(sy/nn)&&Math.abs(bE)>0.01;
+        h += `<h3>Comprobación con alturas conocidas</h3><div class="res">
+          <div class="kv"><span>marcas comparadas</span><b>${nn}</b></div>
+          <div class="big"><s>Escala medida / real</s><b${escala?' style="color:var(--bad)"':''}>${fmt(aE,4)}</b></div>
+          <div class="kv"><span>desfase de origen</span><b>${fmt(bE*100,1)} cm</b></div>
+          <div class="kv"><span>dispersión alrededor de la recta</span><b>${fmt(rr*100,1)} cm</b></div>
+        </div>
+        <table><tr><th>Marca</th><th>Medida</th><th>Real</th><th>Error</th><th>%</th></tr>
+        ${cmp.map(x=>`<tr><td>${x.lab||"—"}</td><td>${fmtH(x.dH)}</td><td>${fmtH(+x.hReal)}</td>
+          <td>${fmtH(x.dH-(+x.hReal))}</td>
+          <td style="color:${Math.abs(x.dH/(+x.hReal)-1)>0.04?"var(--bad)":"var(--ok)"}">${
+            fmt(100*(x.dH/(+x.hReal)-1),1)}</td></tr>`).join("")}
+        </table>`;
+        if (escala) h += `<div class="verdict v-no" style="text-align:left;font-weight:500">
+          <b>Error de escala de ${fmt(100*(aE-1),1)} %.</b> Todas las alturas salen multiplicadas por el mismo
+          factor, y eso solo puede venir de dos sitios: la <b>distancia de observación</b> o la <b>focal del
+          perfil</b>. No es marcado, no es inclinación y no es el origen, porque ninguno de esos produce un
+          factor constante.<br>
+          · Si la distancia fuera la causa, la real sería <b>${fmt((+S.med.d)/aE,2)} m</b> en vez de los
+          ${fmt(+S.med.d,2)} m escritos. Compruébala primero, que es lo más fácil de equivocar.<br>
+          · Si la distancia es correcta, entonces el perfil no corresponde a este fotograma: la focal tendría que
+          ser <b>${fmt(perfil().fRel*aE,5)}</b> y no ${fmt(perfil().fRel,5)}. Eso pasa cuando la cámara se abre con
+          otro recorte o con otro objetivo que cuando se calibró${zoomDe(perfil())!==null?", o con otro zoom ("
+            +"el perfil es ×"+fmt(zoomDe(perfil()),2)+")":""}.</div>`;
+        if (desfase) h += `<div class="verdict v-na" style="text-align:left;font-weight:500">
+          <b>Desfase de origen de ${fmt(bE*100,1)} cm.</b> Un error que no escala con la altura es el origen mal
+          puesto, o que el origen no está a la misma distancia de la cámara que los puntos.</div>`;
+        if (!escala && !desfase) h += `<div class="verdict v-ok">Escala y origen correctos dentro del 2 %</div>`;
+      }
       if (hechos.length>1)
         h += `<div class="note">Entre marcas: ` +
           hechos.slice(1).map((x,k)=>`${k+1}→${k+2} <b>${fmtH(x.dH-hechos[k].dH)} m</b>`).join(" · ") + `</div>`;
@@ -1798,6 +1861,19 @@ function uiCalib(){
   <div class="btns"><button id="cAdd">+ punto</button><button id="cDel">− punto</button>
     <button class="p" id="cRun">Ajustar</button></div>`;
 
+  /* Los datos de cada calibración viven en Ajustes, pero nadie los busca ahí:
+     se buscan donde se calibró. Esta lista es el atajo. */
+  if (S.perfiles.length) h += `<h3>Perfiles guardados</h3>
+    <table><tr><th>Perfil</th><th>Calibrado</th><th>Error</th><th></th></tr>
+    ${S.perfiles.map(q=>`<tr>
+      <td>${q.name}<br><span style="color:var(--dim)">[${USOS[q.uso||"foto"]}]${q.w?" · "+q.w+"×"+q.h:""}</span></td>
+      <td>${q.datos?new Date(q.datos.fecha).toLocaleDateString("es-ES"):"—"}</td>
+      <td>${q.datos?fmt(q.datos.rms,2)+" px":"—"}</td>
+      <td><button class="mini aVer" data-id="${q.id}">${q.datos?"ver datos":"abrir"}</button></td>
+    </tr>`).join("")}</table>
+    <div class="note">«Ver datos» abre el expediente de esa calibración: distancia, altura de lente, lecturas del
+    inclinómetro, la fila y la columna de cada marca con su desajuste, y los botones de reabrir e informe.</div>`;
+
   h += navHTML();
 
   if (o){
@@ -1881,6 +1957,20 @@ function uiCalib(){
   return h;
 }
 
+/* Expediente de la calibración. Se guarda SIEMPRE que se toca un perfil con
+   un ajuste, también al aplicar solo δ o δρ sobre un perfil que ya existía:
+   antes esos dos caminos cambiaban el perfil sin dejar con qué comprobarlo. */
+function registroCalib(o){
+  return { fecha:new Date().toISOString(), d:+S.calib.d, hCam:+S.calib.hCam,
+           sensor:vacio(S.calib.sensor)?null:+S.calib.sensor,
+           sensorRoll:vacio(S.calib.sensorRoll)?null:+S.calib.sensorRoll,
+           capId:S.calib.capId||"", tipo:S.calib.tipo,
+           puntos:S.calib.puntos.filter(q=>q.y!==null&&isFinite(+q.h))
+                  .map(q=>({h:+q.h, y:+q.y, x:(q.x===null||q.x===undefined)?null:+q.x})),
+           f:o.f, y0:o.y0, phi:o.phi, rms:o.rms, res:o.res.slice(),
+           rho:o.roll?o.roll.rho:null, rhoRms:o.roll?o.roll.rms:null,
+           deltaRoll:(o.deltaRoll===null||o.deltaRoll===undefined)?null:o.deltaRoll };
+}
 function informeCalib(p){
   if(!p||!p.datos) return "Este perfil no guarda datos de calibración.";
   const D=p.datos, L=[];
@@ -2065,6 +2155,9 @@ function enlaza(){
     if (S.sel>=S.marks.puntos.length) S.sel=S.marks.puntos.length-1;
     pinta();
   }));
+  $$(".mReal").forEach(el=>el.addEventListener("change",e=>{
+    const q=S.marks.puntos[+e.target.dataset.i]; if(!q) return;
+    q.hReal = e.target.value===""?null:+e.target.value; guarda(); pinta(); }));
   $$(".mLab").forEach(el=>el.addEventListener("change",e=>{
     S.marks.puntos[+e.target.dataset.i].lab = e.target.value; pinta();
   }));
@@ -2079,7 +2172,7 @@ function enlaza(){
     pinta();
   });
   on("bAdd","click",()=>{
-    S.marks.puntos.push({lab:"", x:null, y:null});
+    S.marks.puntos.push({lab:"", x:null, y:null, hReal:null});
     S.sel = S.marks.puntos.length-1; pinta();
   });
   on("bRet","click",()=>{ S.reticula=!S.reticula; pinta(); });
@@ -2166,6 +2259,8 @@ function enlaza(){
     await cargaCapturas();}));
   on("kFull","click",()=>{S.calib.tipo="full";S.calib.out=null;pinta();});
   on("kPhi","click",()=>{S.calib.tipo="phi";S.calib.out=null;pinta();});
+  $$(".aVer").forEach(el=>el.addEventListener("click",e=>{
+    S.perfilId=e.target.dataset.id; guarda(); S.modo="ajustes"; sincTabs(); pinta(); }));
   on("cQuita","click",e=>{
     const i=+e.target.dataset.i; const q=S.calib.puntos[i]; if(!q) return;
     if(!confirm("¿Quitar la marca "+(i+1)+" del ajuste?\n\nSe borra su fila y su columna, no la altura escrita, "
@@ -2207,18 +2302,7 @@ function enlaza(){
     S.perfiles.push({id,name,fRel:o.fRel,y0Rel:o.y0Rel,delta:o.delta===null?0:o.delta,
       deltaRoll:(o.deltaRoll===null||o.deltaRoll===undefined)?0:+o.deltaRoll.toFixed(3), uF:0.40,
       w:S.src.w, h:S.src.h, camaraId:S.calib.camaraId||"", uso:S.calib.uso||"foto",
-      /* Se guarda el expediente completo, no solo el resultado. Sin los datos
-         de partida una calibración no se puede comprobar ni corregir, y ante
-         un organismo notificado no se sostiene. */
-      datos:{ fecha:new Date().toISOString(), d:+S.calib.d, hCam:+S.calib.hCam,
-              sensor:+S.calib.sensor,
-              sensorRoll:vacio(S.calib.sensorRoll)?null:+S.calib.sensorRoll,
-              capId:S.calib.capId||"", tipo:S.calib.tipo,
-              puntos:S.calib.puntos.filter(q=>q.y!==null&&isFinite(+q.h))
-                     .map(q=>({h:+q.h, y:+q.y, x:(q.x===null||q.x===undefined)?null:+q.x})),
-              f:o.f, y0:o.y0, phi:o.phi, rms:o.rms, res:o.res.slice(),
-              rho:o.roll?o.roll.rho:null, rhoRms:o.roll?o.roll.rms:null,
-              deltaRoll:(o.deltaRoll===null||o.deltaRoll===undefined)?null:o.deltaRoll },
+      datos:registroCalib(o),
       note:"Ajuste de "+o.n+" puntos, rms "+fmt(o.rms,2)+" px, "+S.src.w+"×"+S.src.h+" px"});
     S.perfilId=id; guarda(); pinta();
     alert(S.calib.camaraId
@@ -2235,6 +2319,7 @@ function enlaza(){
     if(!confirm("¿Fijar δ = "+fmt(o.delta,3)+"° en el perfil «"+p.name+"»?\n\nValor actual: "+fmt(p.delta,3)+"°"+aviso)) return;
     p.delta=+o.delta.toFixed(4);
     p.note=(p.note||"")+" · δ reajustada a "+fmt(o.delta,3)+"°";
+    p.datos=registroCalib(o);
     guarda(); S.modo="ajustes"; sincTabs(); pinta();
   });
   on("cSaveDR","click",()=>{
@@ -2246,6 +2331,7 @@ function enlaza(){
       +"la vertical dibujada debe cruzar todas las marcas.")) return;
     p.deltaRoll=+(+o.deltaRoll).toFixed(3);
     p.note=(p.note||"")+" · δρ fijada en "+fmt(o.deltaRoll,3)+"°";
+    p.datos=registroCalib(o);
     guarda(); S.modo="ajustes"; sincTabs(); pinta();
   });
 
@@ -2280,7 +2366,7 @@ function enlaza(){
            obliq:false, angulos:"15, 30", horiz:false, alturas:"20, 30"};
     S.srcCamId=""; localStorage.removeItem("vpd.camId");
     S.calib={puntos:[], d:100, hCam:0, sensor:"", sensorRoll:"", out:null, tipo:"phi", camId:"", origen:"", capId:""};
-    S.marks={origen:null, puntos:[{lab:"Altura de funcionamiento", x:null, y:null}]}; S.sel=-1;
+    S.marks={origen:null, puntos:[{lab:"Altura de funcionamiento", x:null, y:null, hReal:null}]}; S.sel=-1;
     S.src=null; S.reticula=false;
     cerrarCamara(); $("#hint").classList.remove("hide");
     guarda(); pinta();
