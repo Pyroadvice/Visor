@@ -232,13 +232,22 @@ const VENTANA = 1500;                    // ms de promediado
 const SENS = {
   grav:{p:null,r:null,n:0,sp:new Set(),sr:new Set(),pasoP:null,pasoR:null},
   ori :{p:null,r:null,n:0,sp:new Set(),sr:new Set(),pasoP:null,pasoR:null},
-  pref:"ori", buf:[], err:""
+  pref:"ori", buf:[], bufR:[], err:""
 };
 function pasoDe(s){
   const v=[...s].sort((a,b)=>a-b); let m=Infinity;
   for(let i=1;i<v.length;i++){ const d=v[i]-v[i-1]; if(d>1e-7&&d<m) m=d; }
   return isFinite(m)?m:null;
 }
+/* El balanceo se toma SIEMPRE del vector gravedad, nunca de la orientación.
+   La orientación descompone la postura en tres ángulos encadenados, y con el
+   móvil a plomo el cabeceo vale 90°, que es exactamente la posición en que
+   dos de los tres ejes se superponen: ahí el balanceo deja de estar
+   determinado y un giro pequeño se reparte de forma arbitraria entre dos
+   ángulos, lo que produce lecturas absurdamente sensibles. El vector gravedad
+   solo degenera con el móvil tumbado, que es la postura contraria a la de
+   medida. El cabeceo sí se toma de la orientación, que ahí está bien
+   condicionado y viene en rejilla de 0,1° en vez de 0,58°. */
 function anota(src,p,r){
   const o=SENS[src]; o.p=p; o.r=r; o.n++;
   if (o.sp.size<600 && p!==null) o.sp.add(+p.toFixed(6));
@@ -246,7 +255,7 @@ function anota(src,p,r){
   if (o.n%15===0){ o.pasoP=pasoDe(o.sp); o.pasoR=pasoDe(o.sr); }
   if (src===SENS.pref || SENS[SENS.pref].n===0){
     const t=performance.now();
-    SENS.buf.push({t,p,r});
+    SENS.buf.push({t,p,r:null});
     while(SENS.buf.length && t-SENS.buf[0].t>VENTANA) SENS.buf.shift();
   }
   pintaBadges();
@@ -266,7 +275,19 @@ function media(){
    ρ = atan2(gx, gy), cero con el móvil vertical en retrato. */
 function fijaGrav(gx,gy,gz){
   const m = Math.hypot(gx,gy,gz) || 1;
-  anota("grav", Math.asin(-gz/m)*180/Math.PI, Math.atan2(gx,gy)*180/Math.PI);
+  const pitch = Math.asin(-gz/m)*180/Math.PI;
+  const roll  = Math.atan2(gx,gy)*180/Math.PI;
+  const t=performance.now();
+  SENS.bufR.push({t, r:roll});
+  while(SENS.bufR.length && t-SENS.bufR[0].t>VENTANA) SENS.bufR.shift();
+  anota("grav", pitch, roll);
+}
+function mediaRoll(){
+  const b=SENS.bufR;
+  if(!b.length) return {r:null, s:null, n:0};
+  const m=b.reduce((s,x)=>s+x.r,0)/b.length;
+  const sd=Math.sqrt(b.reduce((s,x)=>s+(x.r-m)**2,0)/b.length);
+  return {r:m, s:sd, n:b.length};
 }
 async function activaSensores(){
   if (sensorOn) return;
@@ -283,8 +304,10 @@ async function activaSensores(){
 
   // Fuente fina (rejilla de 0,1° sobre el ángulo): orientación.
   window.addEventListener("deviceorientation", ev=>{
-    if (ev.beta===null && ev.gamma===null) return;
-    anota("ori", ev.beta===null?null:ev.beta-90, ev.gamma ?? null);
+    if (ev.beta===null) return;
+    /* De la orientación se toma solo el cabeceo: gamma no sirve aquí (ver
+       nota en anota()), así que ni se lee. */
+    anota("ori", ev.beta===null?null:ev.beta-90, null);
   });
   // Fuente de respaldo y comprobación cruzada: gravedad (0,1 m/s² → 0,58°).
   try{
@@ -324,7 +347,7 @@ function tiltUsado(){
 }
 function phiSupuesto(){ return !esVivo() && vacio(S.med.phiManual); }
 function rollUsado(){
-  if (esVivo()) return media().r;
+  if (esVivo()) return mediaRoll().r;
   return vacio(S.med.rollManual) ? null : +S.med.rollManual;
 }
 /* Umbrales de balanceo lateral. Recomendación propia, no requisito normativo:
@@ -979,8 +1002,7 @@ function diagHTML(){
     <tr><th>Fuente · cabeceo</th><th>último (°)</th><th>escalón (°)</th><th>n</th></tr>
     ${fila("Orientación",SENS.ori,"p")}
     ${fila("Gravedad",SENS.grav,"p")}
-    <tr><th>Fuente · balanceo</th><th>último (°)</th><th>escalón (°)</th><th>n</th></tr>
-    ${fila("Orientación",SENS.ori,"r")}
+    <tr><th>Balanceo · solo gravedad</th><th>último (°)</th><th>escalón (°)</th><th>n</th></tr>
     ${fila("Gravedad",SENS.grav,"r")}
   </table>
   <div class="kv"><span>promedio de ${fmt(VENTANA/1000,1)} s</span><b>${M.n} muestras</b></div>
