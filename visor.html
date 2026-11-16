@@ -658,7 +658,68 @@ function limpiaMarcas(){
   S.marks.puntos.forEach(q=>{q.y=null; q.x=null;});
   S.sel=-1;
 }
+/* Lector mínimo de EXIF: solo los campos que identifican la óptica. Basta
+   para saber con qué lente y con qué zoom se tomó una foto, y por tanto qué
+   perfil le corresponde. NO sirve para medir: el equivalente de 35 mm viene
+   redondeado por el fabricante y en el S25+ se desvía un 1,9 % de la focal
+   que da la calibración, lo que serían 1,9 % de error en cada altura. */
+function leeExif(buf){
+  const dv=new DataView(buf); const out={};
+  try{
+    if(dv.getUint16(0)!==0xFFD8) return out;
+    let p=2;
+    while(p<dv.byteLength-4){
+      if(dv.getUint8(p)!==0xFF) break;
+      const m=dv.getUint8(p+1), len=dv.getUint16(p+2);
+      if(m===0xE1 && dv.getUint32(p+4)===0x45786966){
+        const t=p+10, le=dv.getUint16(t)===0x4949;
+        const u16=o=>dv.getUint16(o,le), u32=o=>dv.getUint32(o,le);
+        if(u16(t+2)!==42) return out;
+        const leeIFD=(off,dest)=>{
+          const n=u16(t+off);
+          for(let i=0;i<n;i++){
+            const e=t+off+2+i*12, tag=u16(e), tipo=u16(e+2), cnt=u32(e+4);
+            const tam={1:1,2:1,3:2,4:4,5:8,7:1,9:4,10:8}[tipo]||1;
+            const vo=(tam*cnt<=4)?e+8:t+u32(e+8);
+            let v=null;
+            if(tipo===2){ let x=""; for(let k=0;k<cnt-1;k++) x+=String.fromCharCode(dv.getUint8(vo+k)); v=x.trim(); }
+            else if(tipo===3) v=u16(vo);
+            else if(tipo===4) v=u32(vo);
+            else if(tipo===5||tipo===10){ const a=u32(vo), b=u32(vo+4); v=b?a/b:null; }
+            dest[tag]=v;
+          }
+        };
+        const ifd0={}; leeIFD(u32(t+4), ifd0);
+        out.marca=ifd0[0x010F]||null; out.modelo=ifd0[0x0110]||null;
+        if(ifd0[0x8769]){ const ex={}; leeIFD(ifd0[0x8769], ex);
+          out.focal=ex[0x920A]??null; out.f35=ex[0xA405]??null;
+          out.zoomDigital=ex[0xA404]??null; out.lente=ex[0xA434]||null; }
+        return out;
+      }
+      p+=2+len;
+    }
+  }catch(e){}
+  return out;
+}
+/* Focal relativa a la diagonal, magnitud comparable entre fuentes de
+   distinta resolución y relación de aspecto. 43,27 mm es la diagonal del
+   formato de 35 mm, al que se refiere el equivalente del EXIF. */
+const fDiagPerfil = q => (q&&q.w&&q.h) ? q.fRel*q.h/Math.hypot(q.w,q.h) : null;
+function perfilPorExif(){
+  if(!S.exif || !S.exif.f35) return null;
+  const obj=S.exif.f35/43.27;
+  let mejor=null, dif=Infinity;
+  for(const q of S.perfiles){
+    const v=fDiagPerfil(q); if(v===null) continue;
+    const d=Math.abs(v-obj)/obj;
+    if(d<dif){ dif=d; mejor=q; }
+  }
+  return (mejor && dif<0.12) ? {perfil:mejor, dif} : null;
+}
+
 async function cargaImagen(file){
+  S.exif=null;
+  try{ S.exif=leeExif(await file.slice(0,262144).arrayBuffer()); }catch(e){}
   let bmp;
   try{ bmp = await createImageBitmap(file,{imageOrientation:"from-image"}); }
   catch(e){ bmp = await createImageBitmap(file); }
@@ -667,6 +728,8 @@ async function cargaImagen(file){
   limpiaMarcas();
   if (S.modo==="calib"){ S.calib.puntos.forEach(p=>p.y=null); S.calib.out=null;
     S.calib.origen="archivo"; S.calib.camaraId=""; S.calib.capId=""; }
+  const sug=perfilPorExif();
+  if(sug){ S.perfilId=sug.perfil.id; guarda(); }
   encaja(); $("#hint").classList.add("hide"); pinta();
 }
 let vidRAF=0;
@@ -1015,7 +1078,15 @@ function uiMedida(m){
     </select></div>
     <div class="note">${des
       ? "El perfil activo no corresponde a esta fuente: la relación de aspecto no coincide. Elige el que se calibró para ella."
-      : "Una foto o un vídeo no llevan objetivo asociado, así que <b>el perfil se elige a mano</b>: tiene que ser el calibrado para la cámara y el modo con los que se grabó esta imagen."}</div>`;
+      : (S.exif && S.exif.f35
+        ? `La foto lleva escrito con qué óptica se tomó: <b>${[S.exif.marca,S.exif.modelo].filter(Boolean).join(" ")||"cámara desconocida"}</b>,
+           equivalente <b>${fmt(S.exif.f35,0)} mm</b>${S.exif.zoomDigital&&S.exif.zoomDigital!==1?` · zoom digital ×${fmt(S.exif.zoomDigital,1)}`:""},
+           lo que corresponde a <b>×${fmt((S.exif.f35/43.27)/FDIAG_REF,2)}</b>.
+           ${perfilPorExif()? "He seleccionado el perfil que encaja con esa óptica." 
+             : "<b>Ninguno de tus perfiles encaja con esa óptica</b>: calíbrala o elige el perfil a mano."}
+           <br><br>Ese dato solo sirve para <b>identificar</b> la lente: el fabricante redondea el equivalente, y
+           usarlo para medir daría cerca del 2 % de error en cada altura.`
+        : "Esta imagen no trae datos de la óptica, así que <b>el perfil se elige a mano</b>: tiene que ser el calibrado para la cámara y el modo con los que se grabó. Las fotos reenviadas por mensajería suelen perder esos datos; usa el archivo original.")}</div>`;
   }
   h += `<div class="row"><label>Distancia de observación</label><input type="number" step="0.01" id="iD" value="${S.med.d}"><span class="u">m</span></div>`;
 
