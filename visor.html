@@ -148,6 +148,12 @@ const fmtH = v => fmt(v, dec(v));
    Redondear la etiqueta a entero convertía «0,5 m» en «1 m»: la etiqueta
    mentía sobre la línea que acompaña, que es peor que no etiquetar. Se usan
    los decimales justos, hasta tres, y ninguno de más. */
+/* Lectura de un campo numérico escrito a mano: admite coma decimal y
+   devuelve "" para lo que no sea un número, incluido un «-» a medio teclear. */
+const numDe = v => {
+  const t=String(v==null?"":v).trim().replace(",",".");
+  return (t===""||!isFinite(+t)) ? "" : +t;
+};
 const fmtEtiq = v => {
   if(v===null||v===undefined||!isFinite(v)) return "—";
   for(const k of [0,1,2]) if(Math.abs(v-+v.toFixed(k))<1e-9) return fmt(v,k);
@@ -1167,11 +1173,13 @@ function uiMedida(m){
     (δ y δρ) para obtener el ángulo del eje óptico, que es otra cosa y figura en el bloque técnico.
     Al congelar, estas lecturas pasan a ser datos de la toma.</div>`;
   } else {
-    h += `<div class="row"><label>Inclinación frontal</label><input type="number" step="0.01" id="iPhi"
-      value="${S.med.phiManual??""}" placeholder="lectura del sensor al disparar"><span class="u">°</span>
+    h += `<div class="row"><label>Inclinación frontal</label><input type="text" inputmode="decimal" id="iPhi"
+      value="${S.med.phiManual??""}" placeholder="ángulo de la toma">
+      <button class="mini sg" data-f="iPhi">±</button><span class="u">°</span>
       <span style="flex:0 0 auto">${apl(tl,dl)}</span></div>
-    <div class="row"><label>Inclinación lateral</label><input type="number" step="0.01" id="iRoll"
-      value="${S.med.rollManual??""}" placeholder="opcional"><span class="u">°</span>
+    <div class="row"><label>Inclinación lateral</label><input type="text" inputmode="decimal" id="iRoll"
+      value="${S.med.rollManual??""}" placeholder="opcional">
+      <button class="mini sg" data-f="iRoll">±</button><span class="u">°</span>
       <span style="flex:0 0 auto">${apl(rl,dr)}</span></div>
     <div class="note">Escribe lo que marcaba el inclinómetro al disparar, no un ángulo ya corregido: la
     desalineación del aparato la añade el modelo.</div>`;
@@ -1705,20 +1713,49 @@ function uiCalib(){
   <h3>Geometría del ensayo</h3>
   <div class="row"><label>Distancia horiz.</label><input type="number" step="0.1" id="cD" value="${S.calib.d}"><span class="u">cm</span></div>
   <div class="row"><label>Altura de lente</label><input type="number" step="0.1" id="cHc" value="${S.calib.hCam}"><span class="u">cm</span></div>
-  <div class="row"><label>Lectura sensor · frontal</label><input type="number" step="0.01" id="cSen" value="${S.calib.sensor}" placeholder="obligatorio"><span class="u">°</span></div>
-  <div class="row"><label>Lectura sensor · lateral</label><input type="number" step="0.01" id="cSenR" value="${S.calib.sensorRoll}" placeholder="opcional"><span class="u">°</span></div>
+  <div class="row"><label>Lectura sensor · frontal</label><input type="text" inputmode="decimal" id="cSen"
+    value="${S.calib.sensor}" placeholder="${S.calib.origen==="archivo"?"si conoces el ángulo":"obligatorio"}">
+    <button class="mini sg" data-f="cSen">±</button><span class="u">°</span></div>
+  <div class="row"><label>Lectura sensor · lateral</label><input type="text" inputmode="decimal" id="cSenR"
+    value="${S.calib.sensorRoll}" placeholder="opcional">
+    <button class="mini sg" data-f="cSenR">±</button><span class="u">°</span></div>
   <div class="note">La altura de la lente sobre el suelo es imprescindible: sin ella la inclinación y la altura de cámara son indistinguibles y el ajuste no significa nada.
-  La inclinación lateral es opcional, pero si la anotas se obtiene también el cero lateral del inclinómetro.</div>
+  ${S.calib.origen==="archivo"
+    ? `<br><br><b>Esta imagen viene de un archivo, así que las lecturas no son exigibles.</b> Una foto no guarda el
+       ángulo al que estaba el aparato, y una lectura tomada antes o después de disparar no es la de la toma: con la
+       cámara en la mano, un grado de diferencia es un movimiento que no se nota. Déjalas vacías y el perfil se
+       guarda con δ = 0, que es lo honesto: conserva la óptica, que es lo que cuesta medir, y el ángulo de cada
+       medida se escribe al medir. Rellénalas solo si sabes el ángulo exacto de ESTA toma.`
+    : `La inclinación lateral es opcional, pero si la anotas se obtiene también el cero lateral del inclinómetro.`}
+  <br><br>El botón <b>±</b> cambia el signo, porque el teclado numérico del móvil no trae tecla de menos.</div>
 
   <h3>Puntos</h3>
-  <table><tr><th>#</th><th>Altura (cm)</th><th>y (px)</th><th>x (px)</th><th></th></tr>
-  ${S.calib.puntos.map((p,i)=>`<tr>
-    <td>${i+1}</td>
-    <td><input type="number" step="0.1" class="cH" data-i="${i}" value="${p.h??""}"></td>
-    <td>${p.y===null?"—":fmt(p.y,1)}</td>
-    <td>${p.x===null||p.x===undefined?"—":fmt(p.x,0)}</td>
-    <td><button class="mini cFix" data-i="${i}">fijar</button></td>
-  </tr>`).join("")}</table>
+  ${(()=>{ const E=escalas(S.calib.puntos);
+    const esc=new Map(); let raro=false;
+    if(E&&E.med) E.tramos.forEach(t=>{
+      const d = t.s===null?null:Math.abs(t.s/E.med-1);
+      if(d!==null && d>0.15) raro=true;
+      esc.set(t.a, {s:t.s, d});
+    });
+    return `<table><tr><th>#</th><th>Altura (cm)</th><th>y (px)</th><th>x (px)</th><th>px/cm</th><th></th></tr>
+    ${S.calib.puntos.map((p,i)=>{
+      const e = (p.h!==null&&esc.has(+p.h)) ? esc.get(+p.h) : null;
+      return `<tr>
+        <td>${i+1}</td>
+        <td><input type="number" step="0.1" class="cH" data-i="${i}" value="${p.h??""}"></td>
+        <td>${p.y===null?"—":fmt(p.y,1)}</td>
+        <td>${p.x===null||p.x===undefined?"—":fmt(p.x,0)}</td>
+        <td${e&&e.d>0.15?' style="color:var(--bad);font-weight:700"':""}>${e&&e.s!==null?fmt(e.s,3):"—"}</td>
+        <td><button class="mini cFix" data-i="${i}">fijar</button></td>
+      </tr>`;}).join("")}</table>
+    ${raro?`<div class="verdict v-no" style="text-align:left;font-weight:500">
+      <b>La escala no es uniforme entre marcas.</b> En la pared, la separación en píxeles por centímetro cambia
+      despacio y siempre en el mismo sentido al subir. Una marca cuya escala se sale del resto más de un 15 %
+      señala que esa altura está mal escrita o que la cruz está en otra marca. Está marcado en rojo arriba, y
+      conviene arreglarlo antes de ajustar: esto no depende del ajuste, así que es más fiable que su error.</div>`
+    :(E&&E.med?`<div class="note">Escala entre marcas consecutivas, en píxeles por centímetro. Cambia despacio al
+      subir; si una se sale del resto, esa altura está mal escrita o la cruz está en otra marca.</div>`:"")}`;
+  })()}
   <div class="note">La columna <b>x</b> se guarda para medir la inclinación lateral: todas las marcas están en una misma vertical de la pared, así que su desviación lateral en la imagen delata el giro de la cámara.</div>
   <div class="btns"><button id="cAdd">+ punto</button><button id="cDel">− punto</button>
     <button class="p" id="cRun">Ajustar</button></div>`;
@@ -1757,26 +1794,30 @@ function uiCalib(){
         ?"Ajuste pobre: revisa las alturas escritas, la distancia y que las marcas se vean nítidas"
         :"Ajuste correcto"}</div></div>
       ${o.sosp?`<div class="verdict v-na" style="text-align:left;font-weight:500">
-        <b>La marca ${o.sosp.i+1} desentona.</b> Dejándola fuera, el error de ajuste baja de
-        ${fmt(o.sosp.base,2)} px a ${fmt(o.sosp.rms,2)} px. Ninguna otra marca mejora tanto el ajuste, así que el
-        problema no está repartido: está en esa.
-        ${(()=>{ const q=o.sosp.punto, g={f:o.f,y0:o.y0};
-          const F = o.tipo==="full" ? fitFull(o.pts.filter(z=>z!==q), +S.calib.d, +S.calib.hCam) : null;
+        <b>${o.sosp.idx.length>1
+          ? "Las marcas "+o.sosp.idx.map(i=>i+1).join(" y ")+" desentonan."
+          : "La marca "+(o.sosp.i+1)+" desentona."}</b> Dejándo${o.sosp.idx.length>1?"las":"la"} fuera, el error de
+        ajuste baja de ${fmt(o.sosp.base,2)} px a ${fmt(o.sosp.rms,2)} px. ${o.sosp.idx.length>1
+          ? "Ninguna sola lo explica, y eso tiene una causa típica: al teclear las alturas de una fila de marcas es fácil saltarse una y correr las siguientes."
+          : "Ninguna otra marca mejora tanto el ajuste, así que el problema no está repartido: está en esa."}
+        ${(()=>{ const fuera=o.sosp.puntos;
+          const F = o.tipo==="full" ? fitFull(o.pts.filter(z=>!fuera.includes(z)), +S.calib.d, +S.calib.hCam) : null;
           if(!F) return "";
-          const rr = Math.tan(Math.atan((F.y0-q.y)/F.f)+F.phi*Math.PI/180);
-          const hR = (+S.calib.hCam)+rr*(+S.calib.d);
-          return `Sin ella, la fila que marcaste corresponde a <b>${fmt(hR,1)} cm</b> y no a los
-                  ${fmt(+q.h,1)} cm escritos: ${Math.abs(hR-(+q.h))>3
-                    ? "o la cruz quedó en otro sitio (el zócalo, la junta del suelo, otra marca), o esa altura está mal escrita"
-                    : "revisa esa cruz con la vista ampliada"}.`;
+          return fuera.map((q,k)=>{
+            const rr = Math.tan(Math.atan((F.y0-q.y)/F.f)+F.phi*Math.PI/180);
+            const hR = (+S.calib.hCam)+rr*(+S.calib.d);
+            return `<br>Marca ${o.sosp.idx[k]+1}: la fila que marcaste corresponde a <b>${fmt(hR,1)} cm</b> y no a
+                    los ${fmt(+q.h,1)} cm escritos.`;
+          }).join("")+"<br>O la cruz quedó en otra marca, o esa altura está mal escrita.";
         })()}
         </div>
-      <div class="btns"><button id="cQuita" data-i="${S.calib.puntos.indexOf(o.sosp.punto)}">Quitar la marca ${o.sosp.i+1} y reajustar</button></div>`:""}
-      ${o.delta===null?`<div class="verdict v-na" style="text-align:left;font-weight:500">
+      <div class="btns"><button id="cQuita" data-i="${o.sosp.idx.map(i=>S.calib.puntos.indexOf(o.pts[i])).join(",")}">Quitar
+        ${o.sosp.idx.length>1?"esas marcas":"la marca "+(o.sosp.i+1)} y reajustar</button></div>`:""}
+      ${(o.delta===null && S.calib.origen==="archivo")?`<div class="note">Sin lectura del inclinómetro no hay δ, y
+        con una imagen de archivo es lo normal: se guardará con δ = 0 y el ángulo de cada medida se escribe al medir.</div>`
+       : o.delta===null?`<div class="verdict v-na" style="text-align:left;font-weight:500">
         <b>Falta la lectura del inclinómetro de esta toma.</b> Sin ella no hay δ: la inclinación resuelta por el
-        ajuste no tiene con qué compararse. Escríbela arriba y vuelve a pulsar Ajustar. Si la toma era de un archivo
-        y no anotaste el ángulo, el perfil se puede guardar igualmente con δ = 0, pero entonces habrá que medir δ
-        aparte antes de usarlo en vivo.</div>`
+        ajuste no tiene con qué compararse. Escríbela arriba y vuelve a pulsar Ajustar.</div>`
        : Math.abs(o.delta)>DELTA_MAX?`<div class="verdict v-no" style="text-align:left;font-weight:500">
         <b>δ = ${(o.delta>=0?"+":"")+fmt(o.delta,2)}° no es una desalineación creíble.</b>
         El desfase entre el acelerómetro y el sensor de imagen es de décimas de grado; esto es ${fmt(Math.abs(o.delta),0)}°.
@@ -2218,7 +2259,9 @@ function uiAjustes(){
 /* --------------------------------------------------------- vinculaciones */
 function enlaza(){
   const on=(id,ev,fn)=>{ const e=$("#"+id); if(e) e.addEventListener(ev,fn); };
-  const num=(id,key,obj)=>on(id,"change",e=>{ obj[key]=e.target.value===""?"":+e.target.value; guarda(); pinta(); });
+  /* Acepta coma decimal, que es lo que teclea cualquiera aquí, y descarta un
+     signo suelto sin romper nada: numDe devuelve "" si no hay número. */
+  const num=(id,key,obj)=>on(id,"change",e=>{ obj[key]=numDe(e.target.value); guarda(); pinta(); });
 
   on("bLoadImg","click",()=>$("#fImg").click());
   on("bLoadDoc","click",()=>$("#fDoc").click());
@@ -2360,6 +2403,18 @@ function enlaza(){
 
   // calibración
   num("cD","d",S.calib); num("cHc","hCam",S.calib); num("cSen","sensor",S.calib); num("cSenR","sensorRoll",S.calib);
+  /* El teclado numérico de Android no trae tecla de menos, así que un ángulo
+     negativo no se puede teclear. Este botón le cambia el signo al campo. */
+  $$(".sg").forEach(el=>el.addEventListener("click",e=>{
+    const inp=$("#"+e.currentTarget.dataset.f); if(!inp) return;
+    const v=String(inp.value).trim();
+    inp.value = (v===""||v==="0") ? "-" : (v.startsWith("-") ? v.slice(1) : "-"+v);
+    /* Un «-» suelto no es un número: si se avisara del cambio, el enlace del
+       campo lo leería como vacío, repintaría y se llevaría por delante el
+       signo recién puesto. Se avisa solo cuando ya hay un número. */
+    if(isFinite(+inp.value) && inp.value!=="") inp.dispatchEvent(new Event("change",{bubbles:true}));
+    else inp.focus();
+  }));
   $$(".cH").forEach(e=>e.addEventListener("change",ev=>{
     S.calib.puntos[+ev.target.dataset.i].h = ev.target.value===""?null:+ev.target.value; }));
   $$(".cFix").forEach(e=>e.addEventListener("click",ev=>{
@@ -2388,10 +2443,13 @@ function enlaza(){
   $$(".aVer").forEach(el=>el.addEventListener("click",e=>{
     S.perfilId=e.target.dataset.id; guarda(); S.modo="ajustes"; sincTabs(); pinta(); }));
   on("cQuita","click",e=>{
-    const i=+e.target.dataset.i; const q=S.calib.puntos[i]; if(!q) return;
-    if(!confirm("¿Quitar la marca "+(i+1)+" del ajuste?\n\nSe borra su fila y su columna, no la altura escrita, "
-      +"así que puedes volver a fijarla sobre la imagen cuando quieras.")) return;
-    q.y=null; q.x=null; S.calib.out=ajusta(); pinta();
+    const idx=String(e.target.dataset.i).split(",").map(Number).filter(i=>i>=0);
+    if(!idx.length) return;
+    if(!confirm("¿Quitar "+(idx.length>1?"las marcas ":"la marca ")+idx.map(i=>i+1).join(" y ")
+      +" del ajuste?\n\nSe borra su fila y su columna, no la altura escrita, así que puedes volver a fijarlas "
+      +"sobre la imagen cuando quieras.")) return;
+    idx.forEach(i=>{ const q=S.calib.puntos[i]; if(q){ q.y=null; q.x=null; } });
+    S.calib.out=ajusta(); pinta();
   });
   on("cAdd","click",()=>{S.calib.puntos.push({h:null,y:null,x:null});pinta();});
   on("cDel","click",()=>{S.calib.puntos.pop();pinta();});
@@ -2429,7 +2487,8 @@ function enlaza(){
         +"Aceptar: sustituirla por esta.\n"
         +"Cancelar: conservar las dos (tendrás que elegir a mano cuál usas).");
     }
-    if(o.delta===null && !confirm("No hay lectura del inclinómetro, así que se guardará con δ = 0.\n\n"
+    if(o.delta===null && S.calib.origen!=="archivo"
+       && !confirm("No hay lectura del inclinómetro, así que se guardará con δ = 0.\n\n"
       +"Servirá para medir sobre fotos en las que anotes el ángulo a mano, pero NO para medir en vivo hasta que "
       +"midas δ.\n\n¿Guardar con δ = 0?")) return;
     if(o.delta!==null && Math.abs(o.delta)>DELTA_MAX && !confirm("δ = "+fmt(o.delta,2)+"° no es creíble: la "

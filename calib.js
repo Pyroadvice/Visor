@@ -144,18 +144,61 @@ function fitFull(pts,d,hc){
    calibración sana, quitar cualquier marca apenas cambia nada.            */
 function sospechosa(pts,d,hc,tipo,f0,y00,rmsBase){
   const min = tipo==="phi" ? 3 : 4;            // uno más que el mínimo del ajuste
-  if (pts.length<min+1) return null;
-  let mejor=null;
-  for (let i=0;i<pts.length;i++){
-    const q = pts.filter((_,k)=>k!==i);
-    const o = tipo==="phi" ? (()=>{ const r=ajustaSoloPhi(q,d,hc,f0,y00);
+  const rms = sub => {
+    const o = tipo==="phi" ? (()=>{ const r=ajustaSoloPhi(sub,d,hc,f0,y00);
                                     return r?{rms:rmsDe(r.res)}:null; })()
-                           : fitFull(q,d,hc);
-    if(!o) continue;
-    if(!mejor || o.rms<mejor.rms) mejor={i, rms:o.rms};
+                           : fitFull(sub,d,hc);
+    return o ? o.rms : null;
+  };
+  const sal = idx => ({idx, puntos:idx.map(i=>pts[i]), base:rmsBase,
+                       i:idx[0], punto:pts[idx[0]]});   // i y punto, para una sola
+
+  if (pts.length>=min+1){
+    let mejor=null;
+    for (let i=0;i<pts.length;i++){
+      const r = rms(pts.filter((_,k)=>k!==i));
+      if(r!==null && (!mejor || r<mejor.rms)) mejor={i, rms:r};
+    }
+    if(mejor && mejor.rms <= 0.5*rmsBase)
+      return Object.assign(sal([mejor.i]), {rms:mejor.rms});
   }
-  if(!mejor || mejor.rms > 0.5*rmsBase) return null;
-  return {i:mejor.i, rms:mejor.rms, base:rmsBase, punto:pts[mejor.i]};
+  /* Una sola marca mala se encuentra dejando fuera una cada vez. Dos no:
+     con la otra todavía dentro, el ajuste sigue siendo malo y ninguna
+     parece culpable. Por eso, cuando ninguna sola explica el desastre, se
+     prueban las parejas. Pasa más de lo que parece: al teclear las alturas
+     de una fila de marcas es fácil saltarse una y correr las siguientes. */
+  if (pts.length>=min+2){
+    let mejor=null;
+    for (let i=0;i<pts.length-1;i++)
+      for (let j=i+1;j<pts.length;j++){
+        const r = rms(pts.filter((_,k)=>k!==i&&k!==j));
+        if(r!==null && (!mejor || r<mejor.rms)) mejor={i,j,rms:r};
+      }
+    if(mejor && mejor.rms <= 0.5*rmsBase)
+      return Object.assign(sal([mejor.i,mejor.j]), {rms:mejor.rms});
+  }
+  return null;
+}
+
+/* Escala aparente entre marcas consecutivas, en píxeles por centímetro.
+
+   Es el control más directo que hay y no depende del ajuste: sobre una
+   pared vertical la escala cambia despacio y de forma monótona con la
+   altura, así que una marca cuya escala se sale del resto delata una
+   altura mal escrita o una cruz mal puesta, sin necesidad de ajustar.
+   Devuelve también la mediana, que es con lo que se compara. */
+function escalas(pts){
+  const p = pts.filter(q=>q.y!==null && isFinite(+q.h)).slice()
+               .sort((a,b)=>(+a.h)-(+b.h));
+  if(p.length<2) return null;
+  const e=[];
+  for(let i=0;i<p.length-1;i++){
+    const dh=(+p[i+1].h)-(+p[i].h), dy=p[i].y-p[i+1].y;
+    e.push({de:+p[i].h, a:+p[i+1].h, dh, dy, s: dh?dy/dh:null});
+  }
+  const v=e.map(x=>x.s).filter(x=>x!==null&&isFinite(x)).sort((a,b)=>a-b);
+  const med = v.length ? v[Math.floor(v.length/2)] : null;
+  return {tramos:e, med};
 }
 function ajusta(){
   const pts0 = S.calib.puntos.filter(p=>p.y!==null && isFinite(+p.h));

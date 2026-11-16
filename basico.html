@@ -111,6 +111,10 @@ const $$ = s => [...document.querySelectorAll(s)];
 const fmt = (v,n=2) => (v===null||v===undefined||!isFinite(v)) ? "—" : v.toFixed(n).replace(".",",");
 const dec = v => Math.abs(v)<10 ? 3 : (Math.abs(v)<100 ? 2 : 1);
 const fmtH = v => fmt(v, dec(v));
+const numDe = v => {
+  const t=String(v==null?"":v).trim().replace(",",".");
+  return (t===""||!isFinite(+t)) ? "" : +t;
+};
 const fmtEtiq = v => {
   if(v===null||v===undefined||!isFinite(v)) return "—";
   for(const k of [0,1,2]) if(Math.abs(v-+v.toFixed(k))<1e-9) return fmt(v,k);
@@ -538,10 +542,13 @@ function pinta(){
       ${cand.length?cand.map(q=>`<option value="${q.id}"${q.id===S.perfilId?" selected":""}>${q.name}</option>`).join("")
        :'<option value="">— ninguno calibrado para '+USOS[usoFuente()]+' —</option>'}
     </select></div>
-    <div class="row"><label>Inclin. frontal</label><input type="number" step="0.01" id="iPhi"
-      value="${S.med.phiManual??""}" placeholder="ángulo de la toma"><span class="u">°</span></div>
-    <div class="row"><label>Inclin. lateral</label><input type="number" step="0.01" id="iRoll"
-      value="${S.med.rollManual??""}" placeholder="opcional"><span class="u">°</span></div>
+    <div class="row"><label>Inclin. frontal</label><input type="text" inputmode="decimal" id="iPhi"
+      value="${S.med.phiManual??""}" placeholder="ángulo de la toma">
+      <button class="mini sg" data-f="iPhi">±</button><span class="u">°</span></div>
+    <div class="row"><label>Inclin. lateral</label><input type="text" inputmode="decimal" id="iRoll"
+      value="${S.med.rollManual??""}" placeholder="opcional">
+      <button class="mini sg" data-f="iRoll">±</button><span class="u">°</span></div>
+    <div class="nota">El botón ± cambia el signo: el teclado numérico del móvil no trae tecla de menos.</div>
     <div class="nota">La imagen viene de otra cámara: elige el perfil calibrado para ella y escribe los ángulos
     que tuviera el aparato al disparar. Sin inclinación frontal se supone a plomo.</div>
     ${cand.length?"":`<div class="ver v-no">No hay ningún perfil para ${USOS[usoFuente()]}. Calíbralo en
@@ -657,8 +664,18 @@ function ata(){
   on("vPos","input",e=>{ const v=$("#vfile"); v.currentTime=+e.target.value; });
   on("vFre","click",congelaVideo);
   on("pSel","change",e=>{ S.perfilId=e.target.value; guarda(); pinta(); });
-  on("iPhi","change",e=>{ S.med.phiManual=e.target.value===""?"":+e.target.value; guarda(); pinta(); });
-  on("iRoll","change",e=>{ S.med.rollManual=e.target.value===""?"":+e.target.value; guarda(); pinta(); });
+  $$(".sg").forEach(el=>el.addEventListener("click",e=>{
+    const inp=$("#"+e.currentTarget.dataset.f); if(!inp) return;
+    const v=String(inp.value).trim();
+    inp.value = (v===""||v==="0") ? "-" : (v.startsWith("-") ? v.slice(1) : "-"+v);
+    /* Un «-» suelto no es un número: si se avisara del cambio, el enlace del
+       campo lo leería como vacío, repintaría y se llevaría por delante el
+       signo recién puesto. Se avisa solo cuando ya hay un número. */
+    if(isFinite(+inp.value) && inp.value!=="") inp.dispatchEvent(new Event("change",{bubbles:true}));
+    else inp.focus();
+  }));
+  on("iPhi","change",e=>{ S.med.phiManual=numDe(e.target.value); guarda(); pinta(); });
+  on("iRoll","change",e=>{ S.med.rollManual=numDe(e.target.value); guarda(); pinta(); });
   on("bFre","click",congela);
   on("bCie","click",()=>{ cierraCamara(); S.src=null; pinta(); });
   on("iD","change",e=>{ S.med.d=+e.target.value||0; guarda(); pinta(); });
@@ -797,19 +814,30 @@ function uiCalibB(){
     </select></div>`}
     <div class="row"><label>Distancia</label><input type="number" step="0.1" id="cD" value="${C.d}"><span class="u">cm</span></div>
     <div class="row"><label>Altura lente</label><input type="number" step="0.1" id="cH" value="${C.hCam}"><span class="u">cm</span></div>
-    ${aj?"":`<div class="row"><label>Sensor frontal</label><input type="number" step="0.01" id="cS" value="${C.sensor}" placeholder="obligatorio"><span class="u">°</span></div>
-    <div class="row"><label>Sensor lateral</label><input type="number" step="0.01" id="cSR" value="${C.sensorRoll}" placeholder="opcional"><span class="u">°</span></div>`}
+    ${aj?"":`<div class="row"><label>Sensor frontal</label><input type="text" inputmode="decimal" id="cS"
+      value="${C.sensor}" placeholder="obligatorio">
+      <button class="mini sg" data-f="cS">±</button><span class="u">°</span></div>
+    <div class="row"><label>Sensor lateral</label><input type="text" inputmode="decimal" id="cSR"
+      value="${C.sensorRoll}" placeholder="opcional">
+      <button class="mini sg" data-f="cSR">±</button><span class="u">°</span></div>`}
     <div class="nota">La altura de la lente sobre el suelo es imprescindible: sin ella la inclinación y la altura de
     cámara son indistinguibles.${aj?" De una cámara ajena no hay lecturas de inclinómetro, así que δ no se mide: el perfil guarda la óptica, que es lo que importa, y el ángulo de la toma se escribe al medir."
       :" La lectura frontal es obligatoria para obtener δ."}</div>
     <h2>Marcas</h2>
-    <table><tr><th>#</th><th>Altura (cm)</th><th>y</th><th>x</th><th></th></tr>
-    ${C.puntos.map((q,i)=>`<tr><td>${i+1}</td>
-      <td><input type="number" step="0.1" class="cHh" data-i="${i}" value="${q.h??""}" style="font:13.5px inherit;padding:6px 8px"></td>
-      <td class="u">${q.y===null?"—":fmt(q.y,0)}</td>
-      <td class="u">${q.x===null||q.x===undefined?"—":fmt(q.x,0)}</td>
-      <td><button class="mini cFij" data-i="${i}">fijar</button></td></tr>`).join("")}
-    </table>
+    ${(()=>{ const E=escalas(C.puntos); const esc=new Map(); let raro=false;
+      if(E&&E.med) E.tramos.forEach(t=>{ const d=t.s===null?null:Math.abs(t.s/E.med-1);
+        if(d!==null&&d>0.15) raro=true; esc.set(t.a,{s:t.s,d}); });
+      return `<table><tr><th>#</th><th>Altura (cm)</th><th>y</th><th>px/cm</th><th></th></tr>
+      ${C.puntos.map((q,i)=>{ const e=(q.h!==null&&esc.has(+q.h))?esc.get(+q.h):null;
+        return `<tr><td>${i+1}</td>
+        <td><input type="number" step="0.1" class="cHh" data-i="${i}" value="${q.h??""}" style="font:13.5px inherit;padding:6px 8px"></td>
+        <td class="u">${q.y===null?"—":fmt(q.y,0)}</td>
+        <td class="u"${e&&e.d>0.15?' style="color:var(--bad);font-weight:700"':""}>${e&&e.s!==null?fmt(e.s,3):"—"}</td>
+        <td><button class="mini cFij" data-i="${i}">fijar</button></td></tr>`;}).join("")}
+      </table>
+      ${raro?`<div class="ver v-no">La escala entre marcas no es uniforme: la que sale en rojo tiene la altura mal
+        escrita o la cruz en otra marca. Esto no depende del ajuste, así que es más fiable que su error.</div>`:""}`;
+    })()}
     <div class="bt"><button class="mini" id="cMas">+ marca</button>
       <button class="mini" id="cMenos">− marca</button>
       <button class="p" id="cAjus">Ajustar</button>
@@ -828,9 +856,12 @@ function uiCalibB(){
         <tr><td>error de ajuste</td><td class="n">${fmt(o.rms,2)} px</td></tr>
       </table>
       <div class="ver ${malo?"v-na":"v-ok"}">${malo?"Ajuste pobre: revisa alturas, distancia y nitidez":"Ajuste correcto"}</div>
-      ${o.sosp?`<div class="ver v-na">La marca ${o.sosp.i+1} desentona: sin ella el error baja de ${
+      ${o.sosp?`<div class="ver v-na">${o.sosp.idx.length>1
+        ? "Las marcas "+o.sosp.idx.map(i=>i+1).join(" y ")+" desentonan"
+        : "La marca "+(o.sosp.i+1)+" desentona"}: sin ella${o.sosp.idx.length>1?"s":""} el error baja de ${
         fmt(o.sosp.base,2)} a ${fmt(o.sosp.rms,2)} px</div>
-        <div class="bt"><button class="mini" id="cQui" data-i="${C.puntos.indexOf(o.sosp.punto)}">Quitarla y reajustar</button></div>`:""}
+        <div class="bt"><button class="mini" id="cQui" data-i="${
+          o.sosp.idx.map(i=>C.puntos.indexOf(o.pts[i])).join(",")}">Quitar y reajustar</button></div>`:""}
       ${(o.delta===null&&!aj)?`<div class="ver v-no">Falta la lectura del sensor frontal: sin ella no hay δ.</div>`:""}
       ${(o.delta!==null&&Math.abs(o.delta)>DELTA_MAX)?`<div class="ver v-no">δ = ${fmt(o.delta,2)}° no es creíble:
         la desalineación mecánica es de décimas de grado. Comprueba que la lectura sea la de esta toma.</div>`:""}
@@ -931,7 +962,7 @@ function ataAjustes(){
     S.calib.out=null; encaja(); pinta();
   });
   on("cOtra","click",()=>{ S.src=null; S.calib.out=null; pinta(); });
-  const numC=(id,k)=>on(id,"change",e=>{ S.calib[k]= e.target.value===""?"":+e.target.value; pinta(); });
+  const numC=(id,k)=>on(id,"change",e=>{ S.calib[k]=numDe(e.target.value); pinta(); });
   numC("cD","d"); numC("cH","hCam"); numC("cS","sensor"); numC("cSR","sensorRoll");
   on("cCam","change",e=>{ S.calib.camaraId=e.target.value; pinta(); });
   $$(".cHh").forEach(el=>el.addEventListener("change",e=>{
@@ -945,10 +976,23 @@ function ataAjustes(){
   on("cMenos","click",()=>{ if(S.calib.puntos.length>2){ S.calib.puntos.pop(); pinta(); } });
   on("cAjus","click",()=>{ S.calib.out=ajusta(); pinta(); });
   on("cQui","click",e=>{
-    const q=S.calib.puntos[+e.target.dataset.i]; if(!q) return;
-    if(!confirm("¿Quitar esa marca del ajuste?\n\nSe borra su fila y su columna, no la altura escrita.")) return;
-    q.y=null; q.x=null; S.calib.out=ajusta(); pinta();
+    const idx=String(e.currentTarget.dataset.i).split(",").map(Number).filter(i=>i>=0);
+    if(!idx.length) return;
+    if(!confirm("¿Quitar "+(idx.length>1?"esas marcas":"esa marca")+" del ajuste?\n\n"
+      +"Se borra su fila y su columna, no la altura escrita.")) return;
+    idx.forEach(i=>{ const q=S.calib.puntos[i]; if(q){ q.y=null; q.x=null; } });
+    S.calib.out=ajusta(); pinta();
   });
+  $$(".sg").forEach(el=>el.addEventListener("click",e=>{
+    const inp=$("#"+e.currentTarget.dataset.f); if(!inp) return;
+    const v=String(inp.value).trim();
+    inp.value = (v===""||v==="0") ? "-" : (v.startsWith("-") ? v.slice(1) : "-"+v);
+    /* Un «-» suelto no es un número: si se avisara del cambio, el enlace del
+       campo lo leería como vacío, repintaría y se llevaría por delante el
+       signo recién puesto. Se avisa solo cuando ya hay un número. */
+    if(isFinite(+inp.value) && inp.value!=="") inp.dispatchEvent(new Event("change",{bubbles:true}));
+    else inp.focus();
+  }));
   on("cGua","click",guardaCalib);
 
   /* ensayos */
