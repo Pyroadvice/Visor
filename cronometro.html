@@ -94,6 +94,7 @@ a{color:var(--acc)}
 /* ------------------------------------------------------ registro imprimible */
 #doc{background:#fff;color:#111;border-radius:7px;padding:17px 16px;margin:9px 0;
   font:12px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+@media screen{#doc{overflow-x:auto}}
 #doc h3{font-size:15px;margin:0 0 2px}
 #doc h4{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:#555;
   margin:15px 0 5px;border-bottom:1px solid #ccc;padding-bottom:3px}
@@ -463,8 +464,11 @@ function componentes(p){
   const uCron=(+P().resol||0.01)/Math.sqrt(12);
   const c=[{t:"Cuantificación del display (resolución/√12)", u:uCron, inc:true}];
   if(D.metodoExt==="camara"){
-    const uf=(p && p.uFrame!==undefined)?p.uFrame:U_FRAME[CAM.via||"now"];
-    c.push({t:"Marca temporal del fotograma", u:uf, inc:true});
+    /* Si el punto ya se capturó se usa su marca real; si todavía no hay
+       ninguna, se muestra la que se espera obtener, diciendo cuál es. */
+    const via=(p && p.viaFrame) || CAM.via || "captureTime";
+    const uf=(p && p.uFrame!==undefined)?p.uFrame:U_FRAME[via];
+    c.push({t:"Marca temporal del fotograma ("+via+")", u:uf, inc:true});
     c.push({t:"Referencia UTC de red", u:uRef, inc:true});
   }else if(D.metodoExt==="foto"){
     c.push({t:"Lectura del UTC en la foto", u:+D.uUtcFoto||0.005, inc:true});
@@ -914,11 +918,17 @@ function metodoTxt(){
 function datosRegistro(){
   const pr=P(), R=resultados();
   const hechos=R?R.filter(x=>!x.origen&&!x.vacio):[];
+  /* El presupuesto del documento se calcula sobre un punto realmente medido,
+     no sobre una estimación genérica: si no, la U de la cabecera no coincidía
+     con la U de la tabla de resultados del mismo documento. */
+  const ptRef = pr.puntos.find(p=>p.utc!==null&&p.uFrame!==undefined)
+             || pr.puntos.find(p=>p.utc!==null) || null;
   return {pr, R, hechos, o:pr.puntos[0], g:hechos.length?global(hechos):null,
-          fecha:isoUtc(utcAhora()??Date.now()), comps:componentes()};
+          fecha:isoUtc(utcAhora()??Date.now()), ptRef,
+          comps:componentes(ptRef), uPt:uPunto(ptRef), uInt:uIntervalo(ptRef,ptRef)};
 }
 function registroHtml(){
-  const {pr,R,hechos,o,g,fecha,comps}=datosRegistro();
+  const {pr,R,hechos,o,g,fecha,comps,uPt,uInt}=datosRegistro();
   const si=b=>b?"sí":"NO";
   const F=(SYNC.fuentes||[]);
   const disp=dispersion();
@@ -972,8 +982,8 @@ function registroHtml(){
     <tr><th>Contribución, por punto</th><th class="n">u (s)</th><th>Sumada</th></tr>
     ${comps.map(c=>`<tr><td>${esc(c.t)}</td><td class="n">${fmt(c.u,4)}</td>
       <td>${c.inc?"sí":"<b>no</b>"}</td></tr>`).join("")}
-    <tr><th>u por punto</th><td class="n">${fmt(uPunto(),4)}</td><td></td></tr>
-    <tr><th>U del intervalo (k = 2)</th><td class="n">${fmt(2*uIntervalo(null,null),4)}</td><td></td></tr>
+    <tr><th>u por punto</th><td class="n">${fmt(uPt,4)}</td><td></td></tr>
+    <tr><th>U del intervalo (k = 2)</th><td class="n">${fmt(2*uInt,4)}</td><td></td></tr>
   </table>
   ${comps.some(c=>!c.inc)?`<p class="meta" style="margin:4px 0"><b>Aviso:</b> en esta sistemática el cálculo no suma
     la contribución marcada, por lo que la U declarada es optimista.</p>`:""}
@@ -1028,7 +1038,7 @@ function registroHtml(){
   </div>`;
 }
 function registroMd(){
-  const {pr,R,hechos,o,g,fecha,comps}=datosRegistro();
+  const {pr,R,hechos,o,g,fecha,comps,uPt,uInt}=datosRegistro();
   const si=b=>b?"sí":"NO", L=[];
   L.push("# Registro de verificación de cronómetro","",
     "Pyroadvice T.S — verificación interna de equipo de medida. Generado "+fecha,"",
@@ -1057,8 +1067,8 @@ function registroMd(){
     "## Presupuesto de incertidumbre","",
     "| Contribución, por punto | u (s) | Sumada |","|---|---|---|",
     ...comps.map(c=>"| "+c.t+" | "+fmt(c.u,4)+" | "+(c.inc?"sí":"**no**")+" |"),
-    "| u por punto | "+fmt(uPunto(),4)+" | |",
-    "| U del intervalo (k = 2) | "+fmt(2*uIntervalo(null,null),4)+" | |","");
+    "| u por punto | "+fmt(uPt,4)+" | |",
+    "| U del intervalo (k = 2) | "+fmt(2*uInt,4)+" | |","");
   if(comps.some(c=>!c.inc))
     L.push("**Aviso:** en esta sistemática el cálculo no suma la contribución marcada, por lo que la U declarada",
            "es optimista.","");
