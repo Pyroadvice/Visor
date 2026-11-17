@@ -185,6 +185,7 @@ const uid=()=>"p"+(uidN++);
 const nuevosPuntos=lista=>[0].concat(lista&&lista.length?lista:NOM_DEF)
   .map(n=>({id:uid(),nom:n,utc:null,cron:null}));
 const nuevoProc=(resol,lista)=>({equipo:"",modelo:"",serie:"",resol:resol,
+  nomDef:(lista&&lista.length?lista:NOM_DEF).slice(),
   puntos:nuevosPuntos(lista), func:{bateria:false,display:false,pulsadores:false,cero:false}, obs:""});
 /* «10 s», «3 min», «1 h» o un número suelto, que se entiende en segundos. */
 function segDe(txt){
@@ -205,7 +206,7 @@ const D = Object.assign({
   emaModo:"unico",
   tramos:[{hasta:5,A:0,B:5,Bu:"%"},{hasta:30,A:0,B:1,Bu:"%"},{hasta:null,A:0.1,B:0,Bu:"s/dia"}],
   metodoExt:"camara", uUtcFoto:0.005, uDesfase:0.040,
-  oscPpm:20, nomDef:NOM_DEF.slice(),
+  oscPpm:20, nomDef:NOM_DEF.slice(), regla:"simple",
   operador:"",
   proc:{disp:nuevoProc(0.001,NOM_DEF), ext:nuevoProc(0.01,NOM_DEF)}
 }, guardado);
@@ -216,9 +217,15 @@ if(!Array.isArray(D.tramos)||!D.tramos.length)
   D.tramos=[{hasta:5,A:0,B:5,Bu:"%"},{hasta:30,A:0,B:1,Bu:"%"},{hasta:null,A:0.1,B:0,Bu:"s/dia"}];
 if(!(+D.oscPpm>0)) D.oscPpm=20;
 if(!Array.isArray(D.nomDef)||!D.nomDef.length) D.nomDef=NOM_DEF.slice();
+if(D.regla!=="guarda") D.regla="simple";
 if(!D.proc||!D.proc.disp||!D.proc.ext) D.proc={disp:nuevoProc(0.001,D.nomDef), ext:nuevoProc(0.01,D.nomDef)};
-for(const k of ["disp","ext"]) if(!Array.isArray(D.proc[k].puntos)||!D.proc[k].puntos.length)
-  D.proc[k].puntos=nuevosPuntos(D.nomDef);
+for(const k of ["disp","ext"]){
+  if(!Array.isArray(D.proc[k].puntos)||!D.proc[k].puntos.length) D.proc[k].puntos=nuevosPuntos(D.nomDef);
+  /* Los intervalos definidos pasan a ser de cada equipo: cada uno tiene su
+     rango de uso. Si vienen de la versión anterior, se heredan los globales. */
+  if(!Array.isArray(D.proc[k].nomDef)||!D.proc[k].nomDef.length)
+    D.proc[k].nomDef=(Array.isArray(D.nomDef)&&D.nomDef.length?D.nomDef:NOM_DEF).slice();
+}
 const P = () => D.proc[D.tab];
 const guarda=()=>{ try{ D.uidN=uidN; localStorage.setItem("cron.d",JSON.stringify(D)); }catch(e){} };
 
@@ -587,8 +594,12 @@ function resultados(){
             tramo:D.emaModo==="tramos"?("tramo "+(iT+1)+", "+rangoTxt(iT)):null,
             margen:U>0?mpe/U:null,
             sdia:dT>0?e/dT*86400:null,
-            apto:Math.abs(e)+U<=mpe,
-            dudoso:Math.abs(e)-U<mpe && Math.abs(e)+U>mpe,
+            /* Regla de decisión. En aceptación simple el límite de aceptación
+               coincide con el de tolerancia y la incertidumbre no entra en la
+               decisión: se declara U y se justifica con el margen. Con banda
+               de guarda el intervalo de aceptación se reduce en U. */
+            apto: D.regla==="guarda" ? (Math.abs(e)+U<=mpe) : (Math.abs(e)<=mpe),
+            dudoso: D.regla==="guarda" ? (Math.abs(e)-U<mpe && Math.abs(e)+U>mpe) : false,
             viaFrame:p.viaFrame, fuente:p.fuente, foto:!!IMGS[D.tab+":"+p.id]};
   });
 }
@@ -605,7 +616,9 @@ function global(hechos){
 const nomTxt=s=>s<60?(fmt(s,s%1?1:0)+" s")
   :(s%60?(Math.floor(s/60)+" min "+fmt(s%60,0)+" s"):(fmt(s/60,0)+" min"));
 const etqPunto=(p,i)=>i===0?"Tiempo inicial":nomTxt(p.nom);
-const txtIntervalos=()=>P().puntos.slice(1).map(p=>nomTxt(p.nom)).join(", ");
+/* Los intervalos DEFINIDOS, que no son los puntos vivos de la verificación en
+   curso: a esos se les puede haber añadido alguno suelto. */
+const txtIntervalos=()=>(P().nomDef||NOM_DEF).map(nomTxt).join(", ");
 
 /* Veredicto de un punto, para mostrarlo en su propia casilla según se teclea. */
 function lineaPunto(x){
@@ -631,8 +644,9 @@ function bloqueResultados(){
       ${D.emaModo==="tramos"?`<td>${x.iT+1}</td>`:""}
       <td>${x.dudoso?"?":(x.apto?"✓":"✗")}</td></tr>`).join("")}
     </table>
-    <div class="note">Error = intervalo del cronómetro − intervalo de referencia. «?» significa no concluyente:
-    la incertidumbre se solapa con el límite.</div>
+    <div class="note">Error = intervalo del cronómetro − intervalo de referencia. ${D.regla==="simple"
+      ? "Aceptación simple: se compara el error con el límite, sin descontar U. La U se muestra para justificar que la regla es aplicable."
+      : "«?» significa no concluyente: el intervalo ±U se solapa con el límite."}</div>
     <div class="verdict ${g.cls}">${g.v} · ${g.nAp} de ${g.n} puntos dentro del criterio${
       g.nNo?", "+g.nNo+" fuera":""}${g.nDu?", "+g.nDu+" no concluyentes":""}</div>
     ${lar.dT>=60?`<div class="note">Deriva equivalente en el intervalo más largo:
@@ -861,6 +875,21 @@ function pinta(){
     h+=`<div class="btns"><button id="tAdd">+ tramo</button></div>`;
   }
   h+=`<div class="row"><label>Margen mínimo exigido</label><input type="number" step="1" id="fTur" value="${esc(D.tur)}"><span class="u">: 1</span></div>
+
+  <h2>Regla de decisión</h2>
+  <div class="seg">
+    <button class="${D.regla==="simple"?"on":""}" id="rSim">Aceptación simple</button>
+    <button class="${D.regla==="guarda"?"on":""}" id="rGua">Con banda de guarda</button>
+  </div>
+  <div class="note">${D.regla==="simple"
+    ? `El límite de aceptación coincide con el de tolerancia: el punto es apto si el error medido cabe dentro del
+       error máximo, sin restarle la incertidumbre. Es la regla habitual en verificación. Que se pueda aplicar
+       <b>depende de que el margen sea suficiente</b>: por eso la incertidumbre se sigue calculando y declarando en
+       el registro, como justificación de la regla, aunque no entre en la decisión.`
+    : `El intervalo de aceptación se reduce en U: apto solo si |error| + U cabe dentro del error máximo, y no
+       concluyente si el intervalo ±U cruza el límite. Es más exigente y se usa cuando el margen es escaso o cuando
+       hay que acotar el riesgo de aceptar algo que no cumple.`}</div>
+
   <div class="card">
     <div class="kv" style="color:var(--txt);padding-bottom:5px">
       <b style="text-align:left">Error máximo en tus puntos</b><b></b></div>
@@ -889,20 +918,25 @@ function pinta(){
     <div class="kv"><span>margen en ese intervalo</span><b>${fmt(margen,1)} : 1 ${margen>=D.tur?"✓":"✗"}</b></div>
   </div>`;
   if(margen<D.tur)
-    h+=`<div class="verdict v-na">Con esta configuración el método no alcanza el margen exigido: la incertidumbre es
-      grande frente a la tolerancia. El veredicto sigue siendo honesto porque la incluye, pero discrimina menos.</div>`;
+    h+=`<div class="verdict v-na">El método no alcanza el margen exigido: la incertidumbre es grande frente a la
+      tolerancia. ${D.regla==="simple"
+        ? "Con aceptación simple eso importa, porque la regla se apoya precisamente en que el margen sea suficiente: "+
+          "cerca del límite el riesgo de dar por apto algo que no lo es deja de ser despreciable. Considera la banda "+
+          "de guarda, o deja constancia de ello."
+        : "El veredicto sigue siendo honesto porque la incluye, pero discrimina menos."}</div>`;
 
   /* --------------------------------------------------------------- puntos */
   h+=`<h2>Puntos de comprobación</h2>
   <div class="note">El primer punto es el <b>tiempo inicial</b> y puede tomarse en cualquier instante con el
   cronómetro ya en marcha, sin que marque cero: los demás se comparan contra él.</div>
-  <div class="row"><label>Intervalos</label><input type="text" id="fInt" value="${esc(txtIntervalos())}"
+  <div class="row"><label>Intervalos definidos</label><input type="text" id="fInt" value="${esc(txtIntervalos())}"
     placeholder="10 s, 3 min, 5 min"></div>
   <div class="btns" style="margin:4px 0 6px"><button id="bInt">Aplicar intervalos</button>
     <button id="pAdd">+ punto suelto</button></div>
   <div class="note" style="margin:0 0 9px">Ajústalos al rango de uso real del equipo. Admite «45 s», «3 min»,
-  «1 h» o un número suelto, que se entiende en segundos. Aplicarlos rehace los puntos de esta pestaña y borra
-  sus lecturas y fotos.</div>
+  «1 h» o un número suelto, que se entiende en segundos. Aplicarlos rehace los puntos de esta pestaña y borra sus
+  lecturas y fotos. Un <b>punto suelto</b> se añade solo a la verificación en curso: no cambia la definición, y al
+  empezar una verificación nueva no se arrastra.</div>
   ${imgAviso?`<div class="err">${esc(imgAviso)}</div>`:""}`;
 
   if(esDisp){
@@ -1046,10 +1080,13 @@ function enlaza(){
     lista.sort((a,b)=>a-b);
     if(!confirm("¿Rehacer los puntos con "+lista.map(nomTxt).join(", ")+"? Se pierden las lecturas y las fotos de esta pestaña.")) return;
     pr.puntos.forEach(p=>delete IMGS[D.tab+":"+p.id]);
+    pr.nomDef=lista;            /* la definición es de este equipo */
+    D.nomDef=lista.slice();     /* y queda como arranque de los siguientes */
     pr.puntos=nuevosPuntos(lista);
-    D.nomDef=lista;                       /* queda como predeterminado */
     CR.t0=null; CR.tStop=null; CR.corriendo=false;
     guarda(); guardaImgs(); pinta();});
+  on("rSim","click",()=>{D.regla="simple"; guarda(); pinta();});
+  on("rGua","click",()=>{D.regla="guarda"; guarda(); pinta();});
   on("mCam","click",()=>{D.metodoExt="camara"; guarda(); pinta();});
   on("mFoto","click",()=>{D.metodoExt="foto"; if(CAM.on) camCerrar(); else pinta();});
   on("mLap","click",()=>{D.metodoExt="lap"; if(CAM.on) camCerrar(); else pinta();});
@@ -1109,9 +1146,12 @@ function enlaza(){
       new Date().toISOString().slice(0,10)+".md";
     a.click(); URL.revokeObjectURL(a.href);});
   on("bNuevo","click",()=>{
-    if(!confirm("¿Empezar una verificación nueva en esta pestaña? Se borran lecturas, fotos y observaciones.")) return;
+    if(!confirm("¿Empezar una verificación nueva en esta pestaña? Se borran lecturas, fotos y observaciones, y los "+
+      "puntos vuelven a los intervalos definidos ("+txtIntervalos()+").")) return;
     pr.puntos.forEach(p=>delete IMGS[D.tab+":"+p.id]);
-    pr.puntos=pr.puntos.map(p=>({id:p.id,nom:p.nom,utc:null,cron:null}));
+    /* Se rehacen desde la definición: los puntos sueltos que se añadieran
+       para la verificación anterior no se arrastran a la siguiente. */
+    pr.puntos=nuevosPuntos(pr.nomDef);
     pr.obs=""; pr.func={bateria:false,display:false,pulsadores:false,cero:false};
     CR.t0=null; CR.tStop=null; CR.corriendo=false;
     guarda(); guardaImgs(); $("#docBox").className="hide"; pinta();});
@@ -1220,6 +1260,13 @@ function registroHtml(){
     : `<p style="margin:4px 0">Error máximo admisible (EMA) = ${esc(emaTxt())}, con T el intervalo comprobado.</p>`}
   <p style="margin:4px 0">Margen mínimo exigido entre tolerancia e incertidumbre (TUR): ${fmt(D.tur,0)}:1.
   <b>Criterio interno, no requisito normativo.</b></p>
+  <p style="margin:4px 0"><b>Regla de decisión aplicada:</b> ${D.regla==="simple"
+    ? "aceptación simple. El límite de aceptación coincide con el de tolerancia y la incertidumbre de medida no se "+
+      "descuenta al decidir. La incertidumbre expandida U se declara igualmente en la tabla de resultados, junto con "+
+      "el margen frente a la tolerancia, porque es lo que justifica que la regla sea aplicable."
+    : "binaria con banda de guarda. El intervalo de aceptación se reduce en U: un punto se declara apto solo si "+
+      "|error| + U queda dentro del error máximo admisible, y no concluyente si el intervalo ±U cruza el límite."}
+  Margen conseguido en el intervalo más largo comprobado: ${fmt(mpeDe(dTref)/(2*uInt),1)}:1.</p>
 
   <h4>Presupuesto de incertidumbre</h4>
   <p class="meta" style="margin:4px 0">Declarado en el intervalo más largo comprobado, ${fmt(dTref,0)} s, que es el
@@ -1318,6 +1365,10 @@ function registroMd(){
     L.push("EMA = "+emaTxt()+", con T el intervalo comprobado.","");
   L.push("Margen mínimo exigido entre tolerancia e incertidumbre (TUR): "+fmt(D.tur,0)+":1.",
     "Criterio interno, no requisito normativo.","",
+    "**Regla de decisión aplicada:** "+(D.regla==="simple"
+      ? "aceptación simple. El límite de aceptación coincide con el de tolerancia y la incertidumbre de medida\nno se descuenta al decidir. La incertidumbre expandida U se declara igualmente en la tabla de resultados,\njunto con el margen frente a la tolerancia, porque es lo que justifica que la regla sea aplicable."
+      : "binaria con banda de guarda. El intervalo de aceptación se reduce en U: un punto se declara apto\nsolo si |error| + U queda dentro del error máximo admisible, y no concluyente si el intervalo ±U cruza el\nlímite.")+
+      " Margen conseguido en el intervalo más largo comprobado: "+fmt(mpeDe(dTref)/(2*uInt),1)+":1.","",
     "## Presupuesto de incertidumbre","",
     "Declarado en el intervalo más largo comprobado, "+fmt(dTref,0)+" s, que es el caso más desfavorable. Las",
     "contribuciones por punto entran dos veces, una por el tiempo inicial y otra por el punto comparado.","",
