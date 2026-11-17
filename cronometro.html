@@ -202,6 +202,8 @@ try{ guardado=JSON.parse(localStorage.getItem("cron.d")||"{}"); }catch(e){}
 const D = Object.assign({
   tab:"disp",
   mpeA:0.10, mpeB:1.0, mpeBu:"s/dia", tur:5,
+  emaModo:"unico",
+  tramos:[{hasta:5,A:0,B:5,Bu:"%"},{hasta:30,A:0,B:1,Bu:"%"},{hasta:null,A:0.1,B:0,Bu:"s/dia"}],
   metodoExt:"camara", uUtcFoto:0.005, uDesfase:0.040,
   oscPpm:20, nomDef:NOM_DEF.slice(),
   operador:"",
@@ -209,6 +211,9 @@ const D = Object.assign({
 }, guardado);
 uidN = D.uidN || uidN;
 if(!D.mpeBu) D.mpeBu="s/dia";
+if(D.emaModo!=="tramos") D.emaModo="unico";
+if(!Array.isArray(D.tramos)||!D.tramos.length)
+  D.tramos=[{hasta:5,A:0,B:5,Bu:"%"},{hasta:30,A:0,B:1,Bu:"%"},{hasta:null,A:0.1,B:0,Bu:"s/dia"}];
 if(!(+D.oscPpm>0)) D.oscPpm=20;
 if(!Array.isArray(D.nomDef)||!D.nomDef.length) D.nomDef=NOM_DEF.slice();
 if(!D.proc||!D.proc.disp||!D.proc.ext) D.proc={disp:nuevoProc(0.001,D.nomDef), ext:nuevoProc(0.01,D.nomDef)};
@@ -528,11 +533,46 @@ function ppmMedido(){
 /* ------------------------------------------------- criterio de aceptación */
 const UNID={"s/min":{d:60,et:"s/min"},"s/hora":{d:3600,et:"s/hora"},
             "s/dia":{d:86400,et:"s/día"},"%":{d:100,et:"%"}};
-const bPorSeg = () => (+D.mpeB||0)/((UNID[D.mpeBu]||UNID["s/dia"]).d);
-const mpeDe = dT => (+D.mpeA||0) + bPorSeg()*dT;
-const etqB = () => (UNID[D.mpeBu]||UNID["s/dia"]).et;
-const emaTxt = () => "±(" + fmt(D.mpeA,3) + " s + " + fmt(D.mpeB,3) + " " + etqB() +
-  (D.mpeBu==="%" ? " × T)" : " × T)");
+const divisor = u => (UNID[u]||UNID["s/dia"]).d;
+const etqU    = u => (UNID[u]||UNID["s/dia"]).et;
+/* El criterio puede ser único o por tramos. Un tramo es A + B·T, con B en la
+   unidad elegida, y `hasta` es el límite superior del intervalo en segundos;
+   el último tramo lo deja vacío y recoge todo lo que quede por encima. */
+const tramoUnico = () => ({hasta:null, A:+D.mpeA||0, B:+D.mpeB||0, Bu:D.mpeBu});
+const tramos = () => (D.emaModo==="tramos" && Array.isArray(D.tramos) && D.tramos.length)
+  ? D.tramos : [tramoUnico()];
+const sinTope = t => t.hasta===null || t.hasta===undefined || !(+t.hasta>0);
+function tramoDe(dT){
+  const L=tramos();
+  for(let i=0;i<L.length;i++) if(sinTope(L[i]) || dT<+L[i].hasta) return L[i];
+  return L[L.length-1];
+}
+const iTramoDe = dT => tramos().indexOf(tramoDe(dT));
+const emaDe = (t,dT) => (+t.A||0) + (+t.B||0)/divisor(t.Bu)*dT;
+const mpeDe = dT => emaDe(tramoDe(dT), dT);
+function tramoTxt(t){
+  const p=[];
+  if(+t.A) p.push(fmt(t.A,3)+" s");
+  if(+t.B) p.push(fmt(t.B,3)+" "+etqU(t.Bu)+" × T");
+  return "±"+(p.length?p.join(" + "):"0");
+}
+function rangoTxt(i){
+  const L=tramos(), t=L[i];
+  const desde = i===0 ? null : (sinTope(L[i-1])?null:+L[i-1].hasta);
+  const hasta = sinTope(t) ? null : +t.hasta;
+  if(desde===null && hasta===null) return "cualquier intervalo";
+  if(desde===null) return "por debajo de "+nomTxt(hasta);
+  if(hasta===null) return "desde "+nomTxt(desde);
+  return "de "+nomTxt(desde)+" a "+nomTxt(hasta);
+}
+const emaTxt = () => tramos().map((t,i)=>tramoTxt(t)+" "+rangoTxt(i)).join(" · ");
+/* Los tramos se guardan de menor a mayor tope y el último nunca lleva tope,
+   para que ningún intervalo se quede sin criterio aplicable. */
+function ordenaTramos(){
+  const L=D.tramos;
+  L.sort((a,b)=>(sinTope(a)?Infinity:+a.hasta)-(sinTope(b)?Infinity:+b.hasta));
+  if(L.length) L[L.length-1].hasta=null;
+}
 
 function resultados(){
   const pts=P().puntos, o=pts[0];
@@ -542,8 +582,9 @@ function resultados(){
     if(p.utc===null||p.cron===null) return {i,id:p.id,nom:p.nom,vacio:true};
     const dT=(p.utc-o.utc)/1000, dS=(+p.cron)-(+o.cron), e=dS-dT;
     const u=uIntervalo(o,p,dT), U=2*u;   /* el oscilador depende del intervalo */
-    const mpe=mpeDe(dT);
-    return {i,id:p.id,nom:p.nom,dT,dS,e,U,u,mpe,
+    const mpe=mpeDe(dT), iT=iTramoDe(dT);
+    return {i,id:p.id,nom:p.nom,dT,dS,e,U,u,mpe,iT,
+            tramo:D.emaModo==="tramos"?("tramo "+(iT+1)+", "+rangoTxt(iT)):null,
             margen:U>0?mpe/U:null,
             sdia:dT>0?e/dT*86400:null,
             apto:Math.abs(e)+U<=mpe,
@@ -570,7 +611,7 @@ const txtIntervalos=()=>P().puntos.slice(1).map(p=>nomTxt(p.nom)).join(", ");
 function lineaPunto(x){
   if(!x||x.origen||x.vacio) return null;
   return {cls:x.dudoso?"v-na":(x.apto?"v-ok":"v-no"),
-    txt:"Error "+(x.e>=0?"+":"")+fmt(x.e,3)+" s · EMA ±"+fmt(x.mpe,3)+" s · U ±"+fmt(x.U,4)+" s · "+
+    txt:"Error "+(x.e>=0?"+":"")+fmt(x.e,3)+" s · máx. ±"+fmt(x.mpe,3)+" s · U ±"+fmt(x.U,4)+" s · "+
         (x.dudoso?"NO CONCLUYENTE":(x.apto?"APTO":"NO APTO"))};
 }
 function bloqueResultados(){
@@ -581,11 +622,13 @@ function bloqueResultados(){
     Toma al menos un punto más y teclea su lectura.</div></div>`;
   const g=global(hechos), lar=hechos[hechos.length-1];
   return `<table>
-    <tr><th>Intervalo</th><th>Referencia</th><th>Cronómetro</th><th>Error</th><th>U (k=2)</th><th>EMA</th><th></th></tr>
+    <tr><th>Intervalo</th><th>Referencia</th><th>Cronómetro</th><th>Error</th><th>U (k=2)</th><th>Error máx.</th>
+      ${D.emaModo==="tramos"?"<th>Tramo</th>":""}<th></th></tr>
     ${hechos.map(x=>`<tr>
       <td>${esc(nomTxt(x.nom))}</td><td>${fmt(x.dT,3)} s</td><td>${fmt(x.dS,3)} s</td>
       <td style="color:${x.dudoso?"var(--warn)":(x.apto?"var(--ok)":"var(--bad)")}"><b>${x.e>=0?"+":""}${fmt(x.e,3)}</b></td>
       <td>± ${fmt(x.U,4)}</td><td>± ${fmt(x.mpe,3)}</td>
+      ${D.emaModo==="tramos"?`<td>${x.iT+1}</td>`:""}
       <td>${x.dudoso?"?":(x.apto?"✓":"✗")}</td></tr>`).join("")}
     </table>
     <div class="note">Error = intervalo del cronómetro − intervalo de referencia. «?» significa no concluyente:
@@ -781,13 +824,51 @@ function pinta(){
      caso peor: ahí el término del oscilador pesa más. */
   const dTprev=Math.max(1,...pr.puntos.map(p=>+p.nom||0));
   const pre=presupuesto(null,null,dTprev), margen=mpeDe(dTprev)/pre.U;
+  const selU = (clase,i,val) => `<select class="${clase}" data-i="${i}" style="flex:0 0 84px">
+    ${Object.keys(UNID).map(k=>`<option value="${k}"${val===k?" selected":""}>${UNID[k].et}</option>`).join("")}
+    </select>`;
   h+=`<h2>Criterio de aceptación</h2>
-  <div class="row"><label>Error máximo, fijo</label><input type="number" step="0.01" id="fA" value="${esc(D.mpeA)}"><span class="u">s</span></div>
-  <div class="row"><label>Error máximo, proporcional</label><input type="number" step="0.1" id="fB" value="${esc(D.mpeB)}">
-    <select id="fBu" style="flex:0 0 96px">
-      ${Object.keys(UNID).map(k=>`<option value="${k}"${D.mpeBu===k?" selected":""}>${UNID[k].et}</option>`).join("")}
-    </select></div>
-  <div class="row"><label>Margen mínimo exigido</label><input type="number" step="1" id="fTur" value="${esc(D.tur)}"><span class="u">: 1</span></div>`;
+  <div class="seg">
+    <button class="${D.emaModo==="unico"?"on":""}" id="mUni">Un solo criterio</button>
+    <button class="${D.emaModo==="tramos"?"on":""}" id="mTra">Por tramos de tiempo</button>
+  </div>`;
+  if(D.emaModo==="unico"){
+    h+=`<div class="row"><label>Error máximo, fijo</label><input type="number" step="0.01" id="fA" value="${esc(D.mpeA)}"><span class="u">s</span></div>
+    <div class="row"><label>Error máximo, proporcional</label><input type="number" step="0.1" id="fB" value="${esc(D.mpeB)}">
+      <select id="fBu" style="flex:0 0 96px">
+        ${Object.keys(UNID).map(k=>`<option value="${k}"${D.mpeBu===k?" selected":""}>${UNID[k].et}</option>`).join("")}
+      </select></div>`;
+  }else{
+    const L=tramos();
+    h+=`<div class="note" style="margin:7px 0 8px">Cada tramo se aplica a los intervalos <b>por debajo</b> de su
+    tope. El último no lleva tope y recoge todo lo que quede por encima. Dentro de cada tramo el error máximo sigue
+    siendo fijo + proporcional, así que puedes poner un suelo en segundos y un porcentaje a la vez.</div>`;
+    h+=L.map((t,i)=>`<div class="card" style="padding:9px 10px">
+      <div class="pt-h" style="margin-bottom:6px">
+        <b style="font-size:12.5px">Tramo ${i+1}</b><s>${esc(rangoTxt(i))}</s>
+        ${L.length>1?`<button class="mini tdel" data-i="${i}">×</button>`:""}</div>
+      <div class="pt-r"><span>Hasta</span><input type="text" class="tH" data-i="${i}"
+        value="${sinTope(t)?"":esc(nomTxt(+t.hasta))}"
+        placeholder="${i===L.length-1?"sin tope, recoge el resto":"p. ej. 30 s"}"
+        ${i===L.length-1?'disabled style="font-size:12.5px;opacity:.5"':'style="font-size:12.5px"'}></div>
+      <div class="pt-r"><span>Error máx.</span>
+        <input type="number" step="0.01" class="tA" data-i="${i}" value="${esc(t.A)}" style="flex:1 1 54px">
+        <span class="u" style="width:26px">s +</span>
+        <input type="number" step="0.1" class="tB" data-i="${i}" value="${esc(t.B)}" style="flex:1 1 54px">
+        ${selU("tU",i,t.Bu)}</div>
+      <div class="note" style="margin:5px 0 0">Queda <b>${esc(tramoTxt(t))}</b> ${esc(rangoTxt(i))}.</div>
+      </div>`).join("");
+    h+=`<div class="btns"><button id="tAdd">+ tramo</button></div>`;
+  }
+  h+=`<div class="row"><label>Margen mínimo exigido</label><input type="number" step="1" id="fTur" value="${esc(D.tur)}"><span class="u">: 1</span></div>
+  <div class="card">
+    <div class="kv" style="color:var(--txt);padding-bottom:5px">
+      <b style="text-align:left">Error máximo en tus puntos</b><b></b></div>
+    <table><tr><th>Intervalo</th><th>Error máximo</th>${D.emaModo==="tramos"?"<th>Tramo</th>":""}</tr>
+    ${pr.puntos.slice(1).map(p=>`<tr>
+      <td>${esc(nomTxt(p.nom))}</td><td>± ${fmt(mpeDe(+p.nom||0),3)} s</td>
+      ${D.emaModo==="tramos"?`<td>${iTramoDe(+p.nom||0)+1}</td>`:""}</tr>`).join("")}
+    </table></div>`;
   if(!esDisp){
     const pm=ppmMedido();
     h+=`<div class="row"><label>Marcha del móvil</label><input type="number" step="1" id="fPpm" value="${esc(D.oscPpm)}"><span class="u">± ppm</span></div>
@@ -798,7 +879,7 @@ function pinta(){
       <button class="mini" id="bPpm" style="margin-left:4px">usar ${Math.ceil(pm.ppm)}</button>`
        :` Sin medir todavía: verifica este móvil en la otra pestaña y usa el valor que salga.`}</div>`;
   }
-  h+=`<div class="note">Error máximo admisible EMA = ${emaTxt()}. El <b>margen</b> es la tolerancia dividida por la
+  h+=`<div class="note">Error máximo admisible: ${emaTxt()}. El <b>margen</b> es la tolerancia dividida por la
   incertidumbre de la medida: dice cuántas veces cabe la incertidumbre dentro de lo que se tolera, y por tanto si el
   método puede discriminar. En metrología se le llama TUR. Valores por defecto como recomendación propia, no como
   requisito normativo.</div>
@@ -933,6 +1014,30 @@ function enlaza(){
   num("fRes","resol",pr); num("fA","mpeA",D); num("fB","mpeB",D); num("fTur","tur",D);
   num("fUF","uUtcFoto",D); num("fUD","uDesfase",D); num("fPpm","oscPpm",D);
   on("fBu","change",e=>{D.mpeBu=e.target.value; guarda(); pinta();});
+  on("mUni","click",()=>{D.emaModo="unico"; guarda(); pinta();});
+  on("mTra","click",()=>{D.emaModo="tramos"; guarda(); pinta();});
+  on("tAdd","click",()=>{
+    const L=D.tramos, prev=L.length>=2?+L[L.length-2].hasta:0;
+    L.splice(L.length-1,0,{hasta:(prev>0?prev*2:60),A:0,B:0,Bu:"s/dia"});
+    ordenaTramos(); guarda(); pinta();});
+  const campoTramo=(clase,fn)=>document.querySelectorAll("."+clase).forEach(x=>
+    x.addEventListener("change",e=>{
+      const t=D.tramos[+e.target.dataset.i]; if(!t) return;
+      if(fn(t,e.target)===false) return;
+      ordenaTramos(); guarda(); pinta();}));
+  campoTramo("tH",(t,el)=>{
+    const v=el.value.trim();
+    if(v===""){ t.hasta=null; return; }
+    const s=segDe(v);
+    if(!isFinite(s)||s<=0){ alert("No he entendido ese tope. Escribe algo como «30 s», «2 min» o «1 h»."); return false; }
+    t.hasta=s;});
+  campoTramo("tA",(t,el)=>{t.A=el.value===""?0:+el.value;});
+  campoTramo("tB",(t,el)=>{t.B=el.value===""?0:+el.value;});
+  campoTramo("tU",(t,el)=>{t.Bu=el.value;});
+  document.querySelectorAll(".tdel").forEach(b=>b.addEventListener("click",e=>{
+    if(D.tramos.length<2) return;
+    D.tramos.splice(+e.currentTarget.dataset.i,1);
+    ordenaTramos(); guarda(); pinta();}));
   on("camGo","click",camAbrir); on("camOff","click",camCerrar);
   on("bPpm","click",()=>{const m=ppmMedido(); if(m){D.oscPpm=Math.ceil(m.ppm); guarda(); pinta();}});
   on("bInt","click",()=>{
@@ -1107,8 +1212,13 @@ function registroHtml(){
   NTS; un navegador no puede emplear esos protocolos, por lo que esta verificación no se apoya en ella.</p>
 
   <h4>Criterio de aceptación</h4>
-  <p style="margin:4px 0">Error máximo admisible EMA = ${esc(emaTxt())}, con T el intervalo comprobado.
-  Margen mínimo exigido entre tolerancia e incertidumbre (TUR): ${fmt(D.tur,0)}:1.
+  ${D.emaModo==="tramos"
+    ? `<p style="margin:4px 0">Error máximo admisible (EMA) definido por tramos del intervalo comprobado T:</p>
+       <table><tr><th>Tramo</th><th>Rango de T</th><th>Error máximo admisible</th></tr>
+       ${tramos().map((t,i)=>`<tr><td>${i+1}</td><td>${esc(rangoTxt(i))}</td>
+         <td>${esc(tramoTxt(t))}</td></tr>`).join("")}</table>`
+    : `<p style="margin:4px 0">Error máximo admisible (EMA) = ${esc(emaTxt())}, con T el intervalo comprobado.</p>`}
+  <p style="margin:4px 0">Margen mínimo exigido entre tolerancia e incertidumbre (TUR): ${fmt(D.tur,0)}:1.
   <b>Criterio interno, no requisito normativo.</b></p>
 
   <h4>Presupuesto de incertidumbre</h4>
@@ -1129,11 +1239,12 @@ function registroHtml(){
   <table>
     <tr><th>Intervalo</th><th class="n">Referencia ΔT (s)</th><th class="n">Cronómetro ΔS (s)</th>
         <th class="n">Error (s)</th><th class="n">U (k=2)</th><th class="n">EMA (s)</th>
-        <th>Veredicto</th><th>Muestra</th></tr>
+        ${D.emaModo==="tramos"?"<th>Tramo</th>":""}<th>Veredicto</th><th>Muestra</th></tr>
     ${hechos.map(x=>`<tr>
       <td>${esc(nomTxt(x.nom))}</td><td class="n">${fmt(x.dT,3)}</td><td class="n">${fmt(x.dS,3)}</td>
       <td class="n">${x.e>=0?"+":""}${fmt(x.e,3)}</td><td class="n">± ${fmt(x.U,4)}</td>
       <td class="n">± ${fmt(x.mpe,3)}</td>
+      ${D.emaModo==="tramos"?`<td>${x.iT+1}</td>`:""}
       <td>${x.dudoso?"NO CONCLUYENTE":(x.apto?"APTO":"NO APTO")}</td>
       <td>${x.foto?"muestra-"+esc(x.id)+".jpg":"—"}</td></tr>`).join("")}
   </table>
@@ -1198,9 +1309,15 @@ function registroMd(){
       (dispersion()!==null?" Dispersión entre servidores: ± "+fmt(dispersion(),0)+" ms.":""),
     "La hora legal española es la escala UTC(ROA) del Real Instituto y Observatorio de la Armada, difundida por NTP",
     "y NTS; un navegador no puede emplear esos protocolos, por lo que esta verificación no se apoya en ella.","",
-    "## Criterio de aceptación","",
-    "EMA = "+emaTxt()+", con T el intervalo comprobado. Margen mínimo exigido entre tolerancia e",
-    "incertidumbre (TUR): "+fmt(D.tur,0)+":1. Criterio interno, no requisito normativo.","",
+    "## Criterio de aceptación","");
+  if(D.emaModo==="tramos")
+    L.push("Error máximo admisible (EMA) definido por tramos del intervalo comprobado T:","",
+      "| Tramo | Rango de T | Error máximo admisible |","|---|---|---|",
+      ...tramos().map((t,i)=>"| "+(i+1)+" | "+rangoTxt(i)+" | "+tramoTxt(t)+" |"),"");
+  else
+    L.push("EMA = "+emaTxt()+", con T el intervalo comprobado.","");
+  L.push("Margen mínimo exigido entre tolerancia e incertidumbre (TUR): "+fmt(D.tur,0)+":1.",
+    "Criterio interno, no requisito normativo.","",
     "## Presupuesto de incertidumbre","",
     "Declarado en el intervalo más largo comprobado, "+fmt(dTref,0)+" s, que es el caso más desfavorable. Las",
     "contribuciones por punto entran dos veces, una por el tiempo inicial y otra por el punto comparado.","",
@@ -1212,10 +1329,12 @@ function registroMd(){
     "## Resultados","");
   if(R){
     L.push("Tiempo inicial: UTC "+isoUtc(o.utc)+", cronómetro "+fmt(o.cron,3)+" s.","",
-      "| Intervalo | Referencia ΔT (s) | Cronómetro ΔS (s) | Error (s) | U (k=2) | EMA (s) | Veredicto | Muestra |",
-      "|---|---|---|---|---|---|---|---|");
+      "| Intervalo | Referencia ΔT (s) | Cronómetro ΔS (s) | Error (s) | U (k=2) | EMA (s) |"+
+        (D.emaModo==="tramos"?" Tramo |":"")+" Veredicto | Muestra |",
+      "|---|---|---|---|---|---|"+(D.emaModo==="tramos"?"---|":"")+"---|---|");
     hechos.forEach(x=>L.push("| "+nomTxt(x.nom)+" | "+fmt(x.dT,3)+" | "+fmt(x.dS,3)+" | "+
       (x.e>=0?"+":"")+fmt(x.e,3)+" | ± "+fmt(x.U,4)+" | ± "+fmt(x.mpe,3)+" | "+
+      (D.emaModo==="tramos"?(x.iT+1)+" | ":"")+
       (x.dudoso?"NO CONCLUYENTE":(x.apto?"APTO":"NO APTO"))+" | "+
       (x.foto?"muestra-"+x.id+".jpg":"—")+" |"));
     if(g) L.push("","**Veredicto global: "+g.v+"** ("+g.nAp+" de "+g.n+" puntos dentro del criterio"+
