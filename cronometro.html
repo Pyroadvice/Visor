@@ -32,7 +32,7 @@ h2{margin:22px 0 6px;font-size:11.5px;letter-spacing:.09em;text-transform:upperc
 #crNum{font:700 clamp(22px,7.2vw,32px)/1 ui-monospace,monospace;color:var(--ok)}
 #crEt{font-size:10px;color:var(--dim);margin-top:3px}
 .fbtn{display:flex;gap:6px;margin-top:6px}
-.fbtn>button{flex:1 1 0;padding:8px 4px;font-size:11.5px;font-weight:500;min-width:0}
+.fbtn>button{flex:1 1 0;padding:7px 3px;font-size:11px;line-height:1.25;font-weight:500;min-width:0}
 
 /* ------------------------------------------------------------- componentes */
 .row{display:flex;gap:8px;align-items:center;margin:7px 0}
@@ -142,17 +142,17 @@ a{color:var(--acc)}
     <button id="crStop" disabled>Parar</button>
     <button id="crCero">A cero</button>
   </div>
-  <div class="fbtn">
-    <button class="p" id="bSync">Sincronizar</button>
-    <button id="bServ">Servidores</button>
-    <button id="bModo">Modo de funcionamiento</button>
-  </div>
 </div></div>
 
 <div class="wrap">
   <div class="tabs">
     <button id="tDisp">Cronómetro del dispositivo</button>
     <button id="tExt">Cronómetro externo</button>
+  </div>
+  <div class="fbtn" style="margin:9px 0">
+    <button class="p" id="bSync">Sincronizar</button>
+    <button id="bServ">Servidores</button>
+    <button id="bModo">Modo de funcionamiento</button>
   </div>
   <div id="panServ"></div>
   <div id="panModo"></div>
@@ -263,6 +263,7 @@ const FUENTES=[
    lee:(r,t)=>{const m=/ts=([\d.]+)/.exec(t||""); return m?Math.round(parseFloat(m[1])*1000):NaN;},
    nota:"Campo ts del diagnóstico /cdn-cgi/trace de Cloudflare."},
   {n:"este servidor", via:"segundo", url:location.href, cuerpo:false, head:true,
+   lee:r=>Date.parse(r.headers.get("date")),
    nota:"Cabecera Date del servidor que sirve esta página. Mismo origen, siempre disponible."},
   {n:"timeapi.io", via:"directa", url:"https://timeapi.io/api/Time/current/zone?timeZone=UTC", cuerpo:true,
    lee:(r,t)=>{try{const j=JSON.parse(t); return Date.parse(String(j.dateTime||"").replace(/Z?$/,"")+"Z");}catch(e){return NaN;}},
