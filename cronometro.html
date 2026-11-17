@@ -851,10 +851,10 @@ function pinta(){
         value="${sinTope(t)?"":esc(nomTxt(+t.hasta))}"
         placeholder="${i===L.length-1?"sin tope, recoge el resto":"p. ej. 30 s"}"
         ${i===L.length-1?'disabled style="font-size:12.5px;opacity:.5"':'style="font-size:12.5px"'}></div>
-      <div class="pt-r"><span>Error máx.</span>
-        <input type="number" step="0.01" class="tA" data-i="${i}" value="${esc(t.A)}" style="flex:1 1 54px">
-        <span class="u" style="width:26px">s +</span>
-        <input type="number" step="0.1" class="tB" data-i="${i}" value="${esc(t.B)}" style="flex:1 1 54px">
+      <div class="pt-r"><span style="flex:0 0 88px">Error máx. fijo</span>
+        <input type="number" step="0.01" class="tA" data-i="${i}" value="${esc(t.A)}"><span class="u" style="width:20px">s</span></div>
+      <div class="pt-r"><span style="flex:0 0 88px">… más</span>
+        <input type="number" step="0.1" class="tB" data-i="${i}" value="${esc(t.B)}">
         ${selU("tU",i,t.Bu)}</div>
       <div class="note" style="margin:5px 0 0">Queda <b>${esc(tramoTxt(t))}</b> ${esc(rangoTxt(i))}.</div>
       </div>`).join("");
